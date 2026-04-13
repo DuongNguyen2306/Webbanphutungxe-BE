@@ -2,6 +2,7 @@ const express = require('express')
 const mongoose = require('mongoose')
 const { Product } = require('../models/Product')
 const { Review } = require('../models/Review')
+const { Category } = require('../models/Category')
 const { authRequired } = require('../middleware/auth')
 const { recalculateProductRating } = require('../lib/productRating')
 const { maskAuthor } = require('../lib/maskAuthor')
@@ -29,6 +30,53 @@ router.get('/', async (_req, res) => {
     .populate('category', 'name')
     .lean()
   res.json(list)
+})
+
+/** GET /api/products/search?q=... — smart search theo name/category/tags/compatibleVehicles */
+router.get('/search', async (req, res) => {
+  try {
+    const q = String(req.query.q || '').trim()
+    if (!q) return res.json([])
+    const regex = new RegExp(q, 'i')
+    const catIds = await Category.find({ name: regex })
+      .select('_id')
+      .lean()
+      .then((rows) => rows.map((r) => r._id))
+
+    const list = await Product.find({
+      showOnStorefront: { $ne: false },
+      $or: [
+        { $text: { $search: q } },
+        { name: regex },
+        { tags: regex },
+        { compatibleVehicles: regex },
+        { category: { $in: catIds } },
+      ],
+    })
+      .populate('category', 'name')
+      .lean()
+    res.json(list)
+  } catch (e) {
+    // Fallback an toàn khi text index chưa được build.
+    const q = String(req.query.q || '').trim()
+    const regex = new RegExp(q, 'i')
+    const catIds = await Category.find({ name: regex })
+      .select('_id')
+      .lean()
+      .then((rows) => rows.map((r) => r._id))
+    const list = await Product.find({
+      showOnStorefront: { $ne: false },
+      $or: [
+        { name: regex },
+        { tags: regex },
+        { compatibleVehicles: regex },
+        { category: { $in: catIds } },
+      ],
+    })
+      .populate('category', 'name')
+      .lean()
+    res.json(list)
+  }
 })
 
 /** Thống kê đánh giá (filter như Shopee) — đặt trước /:id */
@@ -70,7 +118,7 @@ router.get('/:id/reviews/summary', async (req, res) => {
       product: pid,
       $or: [
         { 'images.0': { $exists: true } },
-        { 'videos.0': { $exists: true } },
+        { video: { $regex: /\S/ } },
       ],
     })
 
@@ -118,7 +166,7 @@ router.get('/:id/reviews', async (req, res) => {
       parts.push({
         $or: [
           { 'images.0': { $exists: true } },
-          { 'videos.0': { $exists: true } },
+          { video: { $regex: /\S/ } },
         ],
       })
     }
@@ -161,18 +209,29 @@ router.post('/:id/reviews', authRequired, async (req, res) => {
       variantId,
       variantLabel = '',
       comment = '',
-      qualityNote = '',
-      matchDescriptionNote = '',
+      productQuality = '',
+      isCorrectDescription = '',
       images,
-      videos,
+      video = '',
     } = req.body
 
     if (!Number.isFinite(Number(rating))) {
       return res.status(400).json({ message: 'Thiếu hoặc sai rating (1–5).' })
     }
-    const r = Math.round(Number(rating))
-    if (r < 1 || r > 5) {
-      return res.status(400).json({ message: 'rating phải từ 1 đến 5.' })
+    const r = Number(rating)
+    if (r < 0 || r > 5) {
+      return res.status(400).json({ message: 'rating phải từ 0 đến 5.' })
+    }
+    if (Math.round(r * 2) / 2 !== r) {
+      return res
+        .status(400)
+        .json({ message: 'rating phải theo bước 0.5 (vd: 3, 3.5, 4).' })
+    }
+
+    if (req.user?.role === 'admin') {
+      return res
+        .status(403)
+        .json({ message: 'Admin cannot purchase or review products.' })
     }
 
     const product = await Product.findById(id)
@@ -194,15 +253,7 @@ router.post('/:id/reviews', authRequired, async (req, res) => {
     const imageList = Array.isArray(images)
       ? images.map((u) => String(u).trim()).filter(Boolean).slice(0, 20)
       : []
-    const videoList = Array.isArray(videos)
-      ? videos
-          .filter((v) => v && v.url)
-          .map((v) => ({
-            url: String(v.url).trim(),
-            durationSec: Math.max(0, Number(v.durationSec) || 0),
-          }))
-          .slice(0, 10)
-      : []
+    const videoUrl = String(video || '').trim()
 
     let created
     try {
@@ -213,10 +264,10 @@ router.post('/:id/reviews', authRequired, async (req, res) => {
         variantId: variantId || undefined,
         variantLabel: String(variantLabel).trim(),
         comment: String(comment).trim(),
-        qualityNote: String(qualityNote).trim(),
-        matchDescriptionNote: String(matchDescriptionNote).trim(),
+        productQuality: String(productQuality).trim(),
+        isCorrectDescription: String(isCorrectDescription).trim(),
         images: imageList,
-        videos: videoList,
+        video: videoUrl,
       })
     } catch (err) {
       if (err.code === 11000) {

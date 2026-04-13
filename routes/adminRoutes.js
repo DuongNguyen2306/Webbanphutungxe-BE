@@ -7,6 +7,7 @@ const { Order } = require('../models/Order')
 const { User } = require('../models/User')
 const { resolveCategory } = require('../lib/categories')
 const { recalculateProductRating } = require('../lib/productRating')
+const { normalizeOrderStatus, withUrgentFlag } = require('../lib/orders')
 
 const router = express.Router()
 
@@ -21,11 +22,13 @@ function normalizeVariants(body) {
         color: v.color != null ? String(v.color) : '',
         size: v.size != null ? String(v.size) : '',
         price: Number(v.price),
+        stockQuantity: Math.max(0, Number(v.stockQuantity) || 0),
         originalPrice:
           v.originalPrice != null && v.originalPrice !== ''
             ? Number(v.originalPrice)
             : undefined,
         isAvailable: v.isAvailable !== false,
+        sku: v.sku != null && String(v.sku).trim() ? String(v.sku).trim() : undefined,
         images: Array.isArray(v.images)
           ? v.images.map((u) => String(u).trim()).filter(Boolean)
           : [],
@@ -43,7 +46,9 @@ function normalizeVariants(body) {
         color: '',
         size: '',
         price: Number.isFinite(bp) ? bp : 0,
+        stockQuantity: 0,
         isAvailable: true,
+        sku: undefined,
         images: [],
       },
     ]
@@ -75,6 +80,12 @@ router.post('/products', async (req, res) => {
       slug: req.body.slug,
       category: catId,
       description: req.body.description ?? '',
+      tags: Array.isArray(req.body.tags)
+        ? req.body.tags.map((x) => String(x).trim().toLowerCase()).filter(Boolean)
+        : [],
+      compatibleVehicles: Array.isArray(req.body.compatibleVehicles)
+        ? req.body.compatibleVehicles.map((x) => String(x).trim()).filter(Boolean)
+        : [],
       images: Array.isArray(req.body.images) ? req.body.images : [],
       brand: req.body.brand ?? 'honda',
       vehicleType: req.body.vehicleType ?? 'scooter',
@@ -102,6 +113,12 @@ router.put('/products/:id', async (req, res) => {
     if (req.body.category != null)
       p.category = await resolveCategory(req.body.category)
     if (req.body.description != null) p.description = req.body.description
+    if (Array.isArray(req.body.tags))
+      p.tags = req.body.tags.map((x) => String(x).trim().toLowerCase()).filter(Boolean)
+    if (Array.isArray(req.body.compatibleVehicles))
+      p.compatibleVehicles = req.body.compatibleVehicles
+        .map((x) => String(x).trim())
+        .filter(Boolean)
     if (Array.isArray(req.body.images)) p.images = req.body.images
     if (req.body.brand != null) p.brand = req.body.brand
     if (req.body.vehicleType != null) p.vehicleType = req.body.vehicleType
@@ -187,16 +204,29 @@ router.get('/orders', async (_req, res) => {
     .populate('user', 'email phone')
     .sort({ createdAt: -1 })
     .lean()
-  res.json(list)
+  res.json(list.map(withUrgentFlag))
+})
+
+router.get('/orders/urgent', async (_req, res) => {
+  const threshold = new Date(Date.now() - 30 * 60 * 1000)
+  const list = await Order.find({
+    status: { $in: ['PENDING', 'pending'] },
+    createdAt: { $lte: threshold },
+  })
+    .populate('user', 'email phone')
+    .sort({ createdAt: 1 })
+    .lean()
+  res.json(list.map(withUrgentFlag))
 })
 
 router.patch('/orders/:id/status', async (req, res) => {
-  const { status } = req.body
-  if (!['pending', 'confirmed', 'cancelled'].includes(status))
+  const status = normalizeOrderStatus(req.body.status)
+  if (!status)
     return res.status(400).json({ message: 'Trạng thái không hợp lệ.' })
+  const note = req.body.note !== undefined ? String(req.body.note || '') : undefined
   const o = await Order.findByIdAndUpdate(
     req.params.id,
-    { status },
+    { status, ...(note !== undefined ? { note } : {}) },
     { new: true },
   ).lean()
   if (!o) return res.status(404).json({ message: 'Không tìm thấy đơn.' })

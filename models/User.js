@@ -10,6 +10,7 @@ const userSchema = new mongoose.Schema(
       sparse: true,
       unique: true,
     },
+    displayName: { type: String, trim: true, default: '' },
     phone: { type: String, trim: true, sparse: true, unique: true },
     passwordHash: { type: String, required: true },
     role: { type: String, enum: ['user', 'admin'], default: 'user' },
