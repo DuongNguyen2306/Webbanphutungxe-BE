@@ -40,6 +40,7 @@ const productSchema = new mongoose.Schema(
     rating: { type: Number, default: 4.5 },
     reviewCount: { type: Number, default: 0 },
     soldCount: { type: Number, default: 0 },
+    wishlistCount: { type: Number, default: 0, min: 0 },
     minPrice: { type: Number, min: 0, default: 0 },
     variants: [variantSchema],
   },

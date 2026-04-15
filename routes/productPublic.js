@@ -299,6 +299,7 @@ router.get('/:id', async (req, res) => {
   if (p.showOnStorefront === false) {
     return res.status(404).json({ message: 'Không tìm thấy sản phẩm.' })
   }
+  if (!Number.isFinite(p.wishlistCount)) p.wishlistCount = 0
   res.json(p)
 })
 
