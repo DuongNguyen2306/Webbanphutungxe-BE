@@ -12,13 +12,22 @@ function sign(u) {
   )
 }
 
+function getSafeDisplayName(user) {
+  const explicit = String(user?.displayName || '').trim()
+  if (explicit) return explicit
+  const email = String(user?.email || '').trim().toLowerCase()
+  if (email.includes('@')) return email.split('@')[0]
+  return ''
+}
+
 router.post('/register', async (req, res) => {
   try {
-    const { email, phone, password } = req.body
+    const { email, phone, password, name, displayName } = req.body
     if (!password || String(password).length < 6)
       return res.status(400).json({ message: 'Mật khẩu tối thiểu 6 ký tự.' })
     const em = email?.trim()?.toLowerCase() || ''
     const ph = phone?.trim() || ''
+    const dn = String(name ?? displayName ?? '').trim()
     if (!em && !ph)
       return res.status(400).json({ message: 'Cần email hoặc số điện thoại.' })
     if (em) {
@@ -34,10 +43,12 @@ router.post('/register', async (req, res) => {
     const user = await User.create({
       email: em || undefined,
       phone: ph || undefined,
+      displayName: dn,
       passwordHash,
       role: 'user',
     })
     const token = sign(user)
+    const safeName = getSafeDisplayName(user)
     res.status(201).json({
       token,
       user: {
@@ -45,6 +56,8 @@ router.post('/register', async (req, res) => {
         email: user.email,
         phone: user.phone,
         role: user.role,
+        displayName: safeName,
+        name: safeName,
       },
     })
   } catch (e) {
@@ -65,6 +78,7 @@ router.post('/login', async (req, res) => {
     if (!user || !(await user.comparePassword(password)))
       return res.status(401).json({ message: 'Sai email/SĐT hoặc mật khẩu.' })
     const token = sign(user)
+    const safeName = getSafeDisplayName(user)
     res.json({
       token,
       user: {
@@ -72,6 +86,8 @@ router.post('/login', async (req, res) => {
         email: user.email,
         phone: user.phone,
         role: user.role,
+        displayName: safeName,
+        name: safeName,
       },
     })
   } catch (e) {

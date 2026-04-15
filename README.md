@@ -104,6 +104,7 @@ Chi tiết đánh giá: `GET .../reviews/summary` trả `average`, `total`, `byR
 |--------|------|------|----------|
 | POST | `/api/orders` | Tuỳ chọn (có token thì gắn `user`) | `{ "contact": { "name", "email", "phone" }, "items": [{ "productId", "variantId", "name", "variantLabel", "quantity", "price" }], "totalAmount" }` — tổng tiền khớp Σ(price×quantity) sai số ≤ 1; kiểm tra variant tồn tại và `isAvailable` |
 | GET | `/api/orders/my` | Bearer | Đơn của user, `createdAt` giảm dần |
+| PATCH | `/api/orders/:id/cancel` | Bearer | `{ "reason": "..." }` — chỉ hủy được khi đơn đang `pending` hoặc `contacting` |
 
 ### Admin (prefix `/api/admin`)
 
@@ -117,7 +118,8 @@ Tất cả cần JWT + `role: admin`.
 | PATCH | `/api/admin/products/:productId/variants/:variantId/availability` | `{ "isAvailable": true/false }` |
 | DELETE | `/api/admin/reviews/:reviewId` | Xóa đánh giá; cập nhật lại `rating` / `reviewCount` trên Product |
 | GET | `/api/admin/orders` | Populate user (email, phone) |
-| PATCH | `/api/admin/orders/:id/status` | `{ "status": "pending" \| "confirmed" \| "cancelled" }` |
+| GET | `/api/admin/orders/status-options` | Trả danh sách trạng thái chuẩn để FE render dropdown |
+| PATCH | `/api/admin/orders/:id/status` | `{ "status": "pending" \| "contacting" \| "confirmed" \| "shipping" \| "completed" \| "cancelled", "note"?: "..." }` — nếu `cancelled` thì `note` là bắt buộc; chỉ hủy được khi đơn chưa xác nhận |
 | GET | `/api/admin/users` | Không trả `passwordHash` |
 | GET | `/api/admin/categories` | — |
 

@@ -12,10 +12,28 @@ function getSafeDisplayName(user) {
   return ''
 }
 
+function toProfileResponse(user) {
+  const displayName = getSafeDisplayName(user)
+  return {
+    id: user._id,
+    email: user.email || '',
+    phone: user.phone || '',
+    role: user.role,
+    displayName,
+    // Hỗ trợ FE đang dùng key `name`.
+    name: displayName,
+    createdAt: user.createdAt,
+    updatedAt: user.updatedAt,
+  }
+}
+
 router.get('/me', authRequired, async (req, res) => {
   const u = await User.findById(req.userId).select('-passwordHash')
   if (!u) return res.status(404).json({ message: 'Không tìm thấy tài khoản.' })
-  res.json(u)
+  res.json({
+    ...u.toObject(),
+    name: getSafeDisplayName(u),
+  })
 })
 
 router.get('/users/profile', authRequired, async (req, res) => {
@@ -23,15 +41,7 @@ router.get('/users/profile', authRequired, async (req, res) => {
     'email phone role displayName createdAt updatedAt',
   )
   if (!u) return res.status(404).json({ message: 'Không tìm thấy tài khoản.' })
-  res.json({
-    id: u._id,
-    email: u.email || '',
-    phone: u.phone || '',
-    role: u.role,
-    displayName: getSafeDisplayName(u),
-    createdAt: u.createdAt,
-    updatedAt: u.updatedAt,
-  })
+  res.json(toProfileResponse(u))
 })
 
 router.put('/users/profile', authRequired, async (req, res) => {
@@ -54,19 +64,15 @@ router.put('/users/profile', authRequired, async (req, res) => {
       u.phone = phone || undefined
     }
 
-    if (req.body.displayName !== undefined) {
-      u.displayName = String(req.body.displayName || '').trim()
+    const nextName =
+      req.body.name !== undefined ? req.body.name : req.body.displayName
+    if (nextName !== undefined) {
+      u.displayName = String(nextName || '').trim()
     }
 
     await u.save()
 
-    res.json({
-      id: u._id,
-      email: u.email || '',
-      phone: u.phone || '',
-      role: u.role,
-      displayName: getSafeDisplayName(u),
-    })
+    res.json(toProfileResponse(u))
   } catch (e) {
     console.error(e)
     res.status(500).json({ message: 'Cập nhật profile thất bại.' })

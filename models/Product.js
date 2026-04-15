@@ -47,12 +47,11 @@ const productSchema = new mongoose.Schema(
   { timestamps: true },
 )
 
-productSchema.pre('save', function onSave(next) {
+productSchema.pre('save', function onSave() {
   const prices = (this.variants || [])
     .map((v) => Number(v.price))
     .filter((x) => Number.isFinite(x) && x >= 0)
   this.minPrice = prices.length ? Math.min(...prices) : 0
-  next()
 })
 
 productSchema.index({ name: 'text', tags: 'text' })

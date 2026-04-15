@@ -8,7 +8,11 @@ const { Order } = require('../models/Order')
 const { User } = require('../models/User')
 const { resolveCategory } = require('../lib/categories')
 const { recalculateProductRating } = require('../lib/productRating')
-const { normalizeOrderStatus, withUrgentFlag } = require('../lib/orders')
+const {
+  normalizeOrderStatus,
+  withUrgentFlag,
+  ORDER_STATUS_OPTIONS,
+} = require('../lib/orders')
 
 const router = express.Router()
 
@@ -55,6 +59,26 @@ function normalizeVariants(body) {
     ]
   }
   return variants
+}
+
+function getStatusFromBody(body) {
+  if (typeof body === 'string') return body
+  if (!body || typeof body !== 'object') return undefined
+  return body.status ?? body.orderStatus ?? body.nextStatus ?? body.value
+}
+
+function getNoteFromBody(body) {
+  if (!body || typeof body !== 'object') return undefined
+  return body.note ?? body.reason ?? body.cancelReason
+}
+
+function buildShippingAddressText(order) {
+  const a = order?.shippingAddress
+  if (!a || typeof a !== 'object') return ''
+  return [a.detail, a.ward, a.district, a.province]
+    .map((x) => String(x || '').trim())
+    .filter(Boolean)
+    .join(', ')
 }
 
 router.get('/products', async (_req, res) => {
@@ -209,6 +233,10 @@ router.get('/orders', async (_req, res) => {
   res.json(list.map(withUrgentFlag))
 })
 
+router.get('/orders/status-options', async (_req, res) => {
+  res.json({ statuses: ORDER_STATUS_OPTIONS })
+})
+
 router.get('/orders/urgent', async (_req, res) => {
   const threshold = new Date(Date.now() - 30 * 60 * 1000)
   const list = await Order.find({
@@ -221,16 +249,117 @@ router.get('/orders/urgent', async (_req, res) => {
   res.json(list.map(withUrgentFlag))
 })
 
+router.get('/orders/:id', async (req, res) => {
+  try {
+    if (!mongoose.isValidObjectId(req.params.id)) {
+      return res.status(400).json({ message: 'ID đơn hàng không hợp lệ.' })
+    }
+
+    const order = await Order.findById(req.params.id)
+      .populate('user', 'email phone displayName role')
+      .lean()
+    if (!order) return res.status(404).json({ message: 'Không tìm thấy đơn.' })
+
+    const productIds = [
+      ...new Set(
+        (order.items || [])
+          .map((i) => i.productId && String(i.productId))
+          .filter(Boolean),
+      ),
+    ]
+    const products = await Product.find({ _id: { $in: productIds } })
+      .select(
+        'name images variants._id variants.typeName variants.color variants.size variants.price variants.originalPrice variants.stockQuantity variants.isAvailable variants.sku variants.images',
+      )
+      .lean()
+    const productMap = new Map(products.map((p) => [String(p._id), p]))
+
+    const enriched = {
+      ...order,
+      shippingAddressText: buildShippingAddressText(order),
+      items: (order.items || []).map((i) => {
+        const p = productMap.get(String(i.productId))
+        const v = p?.variants?.find(
+          (variant) => String(variant._id) === String(i.variantId),
+        )
+        return {
+          ...i,
+          name: i.name || p?.name || '',
+          variantLabel:
+            i.variantLabel ||
+            [v?.typeName, v?.color, v?.size].filter(Boolean).join(' - ') ||
+            '',
+          thumbnail: v?.images?.[0] || p?.images?.[0] || '',
+          product: p
+            ? {
+                _id: p._id,
+                name: p.name || '',
+                images: p.images || [],
+              }
+            : null,
+          variant: v
+            ? {
+                _id: v._id,
+                typeName: v.typeName || '',
+                color: v.color || '',
+                size: v.size || '',
+                price: Number(v.price || 0),
+                originalPrice: Number(v.originalPrice || 0),
+                stockQuantity: Number(v.stockQuantity || 0),
+                isAvailable: Boolean(v.isAvailable),
+                sku: v.sku || '',
+                images: v.images || [],
+              }
+            : null,
+        }
+      }),
+    }
+
+    res.json(enriched)
+  } catch (e) {
+    console.error(e)
+    res.status(500).json({ message: 'Không tải được chi tiết đơn.' })
+  }
+})
+
 router.patch('/orders/:id/status', async (req, res) => {
-  const status = normalizeOrderStatus(req.body.status)
-  if (!status)
+  if (!mongoose.isValidObjectId(req.params.id)) {
+    return res.status(400).json({ message: 'ID đơn hàng không hợp lệ.' })
+  }
+  const status = normalizeOrderStatus(getStatusFromBody(req.body))
+  if (!status) {
     return res.status(400).json({ message: 'Trạng thái không hợp lệ.' })
-  const note = req.body.note !== undefined ? String(req.body.note || '') : undefined
-  const o = await Order.findByIdAndUpdate(
-    req.params.id,
-    { status, ...(note !== undefined ? { note } : {}) },
-    { new: true },
-  ).lean()
+  }
+
+  const current = await Order.findById(req.params.id).select('status')
+  if (!current) return res.status(404).json({ message: 'Không tìm thấy đơn.' })
+
+  const noteInput = getNoteFromBody(req.body)
+  const note =
+    noteInput !== undefined && noteInput !== null
+      ? String(noteInput).trim()
+      : undefined
+  if (status === 'CANCELLED') {
+    if (!note) {
+      return res.status(400).json({ message: 'Cần nhập lý do hủy đơn.' })
+    }
+    if (!['PENDING', 'CONTACTING'].includes(current.status)) {
+      return res
+        .status(400)
+        .json({ message: 'Chỉ được hủy khi đơn chưa được xác nhận.' })
+    }
+  }
+
+  const update = { status }
+  if (status === 'CANCELLED') {
+    update.note = note
+  } else if (note !== undefined) {
+    update.note = note
+  }
+
+  const o = await Order.findByIdAndUpdate(req.params.id, update, {
+    returnDocument: 'after',
+  }).lean()
   if (!o) return res.status(404).json({ message: 'Không tìm thấy đơn.' })
   res.json(o)
 })
