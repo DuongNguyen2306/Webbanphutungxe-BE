@@ -21,6 +21,12 @@ const {
 
 const router = express.Router()
 
+function formatVariantLabel(v) {
+  const dk = String(v?.displayKey || v?.key || '').trim()
+  if (dk) return dk
+  return [v?.typeName, v?.color, v?.size].filter(Boolean).join(' - ')
+}
+
 function normalizeProductInput(body) {
   return normalizeProductVariantData(body)
 }
@@ -102,8 +108,11 @@ router.post('/products', async (req, res) => {
     if (!req.body.name?.trim())
       return res.status(400).json({ message: 'Tên sản phẩm là bắt buộc.' })
     const catId = await resolveCategory(req.body.category)
-    const { attributes, variants } = normalizeProductInput(req.body)
-    const variantsWithSku = await ensureVariantSkus(req.body.name, variants)
+    const normalized = normalizeProductInput(req.body)
+    const variantsWithSku = await ensureVariantSkus(
+      req.body.name,
+      normalized.variants,
+    )
     const doc = await Product.create({
       name: req.body.name.trim(),
       slug: req.body.slug,
@@ -124,7 +133,13 @@ router.post('/products', async (req, res) => {
       rating: req.body.rating ?? 4.5,
       reviewCount: req.body.reviewCount ?? 0,
       soldCount: req.body.soldCount ?? 0,
-      attributes,
+      hasVariants: normalized.hasVariants,
+      price: normalized.price,
+      stock: normalized.stock,
+      sku: normalized.sku,
+      image: normalized.image,
+      originalPrice: normalized.originalPrice,
+      attributes: normalized.attributes,
       variants: variantsWithSku,
     })
     const populated = await doc.populate('category', 'name')
@@ -160,12 +175,34 @@ router.put('/products/:id', async (req, res) => {
     if (req.body.showOnStorefront !== undefined)
       p.showOnStorefront = Boolean(req.body.showOnStorefront)
     if (
+      req.body.hasVariants !== undefined ||
+      req.body.price !== undefined ||
+      req.body.stock !== undefined ||
+      req.body.stockQuantity !== undefined ||
+      req.body.sku !== undefined ||
+      req.body.image !== undefined ||
+      req.body.originalPrice !== undefined ||
       req.body.variants !== undefined ||
       req.body.attributes !== undefined ||
       req.body.basePrice !== undefined
     ) {
-      const { attributes, variants } = normalizeProductInput({
+      const normalized = normalizeProductInput({
         ...req.body,
+        hasVariants:
+          req.body.hasVariants !== undefined ? req.body.hasVariants : p.hasVariants,
+        price: req.body.price !== undefined ? req.body.price : p.price,
+        stock:
+          req.body.stock !== undefined
+            ? req.body.stock
+            : req.body.stockQuantity !== undefined
+              ? req.body.stockQuantity
+              : p.stock,
+        sku: req.body.sku !== undefined ? req.body.sku : p.sku,
+        image: req.body.image !== undefined ? req.body.image : p.image,
+        originalPrice:
+          req.body.originalPrice !== undefined
+            ? req.body.originalPrice
+            : p.originalPrice,
         attributes:
           req.body.attributes !== undefined ? req.body.attributes : p.attributes,
         variants: req.body.variants !== undefined ? req.body.variants : p.variants,
@@ -174,10 +211,16 @@ router.put('/products/:id', async (req, res) => {
       })
       const variantsWithSku = await ensureVariantSkus(
         req.body.name ?? p.name,
-        variants,
+        normalized.variants,
         p._id,
       )
-      p.attributes = attributes
+      p.hasVariants = normalized.hasVariants
+      p.price = normalized.price
+      p.stock = normalized.stock
+      p.sku = normalized.sku
+      p.image = normalized.image
+      p.originalPrice = normalized.originalPrice
+      p.attributes = normalized.attributes
       p.variants = variantsWithSku
     }
     await p.save()
@@ -295,7 +338,7 @@ router.get('/orders/:id', async (req, res) => {
     ]
     const products = await Product.find({ _id: { $in: productIds } })
       .select(
-        'name images variants._id variants.typeName variants.color variants.size variants.price variants.originalPrice variants.stockQuantity variants.isAvailable variants.sku variants.images',
+        'name images variants._id variants.key variants.displayKey variants.typeName variants.color variants.size variants.price variants.originalPrice variants.stockQuantity variants.isAvailable variants.sku variants.images',
       )
       .lean()
     const productMap = new Map(products.map((p) => [String(p._id), p]))
@@ -311,10 +354,7 @@ router.get('/orders/:id', async (req, res) => {
         return {
           ...i,
           name: i.name || p?.name || '',
-          variantLabel:
-            i.variantLabel ||
-            [v?.typeName, v?.color, v?.size].filter(Boolean).join(' - ') ||
-            '',
+          variantLabel: i.variantLabel || formatVariantLabel(v) || '',
           thumbnail: v?.images?.[0] || p?.images?.[0] || '',
           product: p
             ? {
@@ -326,6 +366,8 @@ router.get('/orders/:id', async (req, res) => {
           variant: v
             ? {
                 _id: v._id,
+                key: v.key || '',
+                displayKey: v.displayKey || '',
                 typeName: v.typeName || '',
                 color: v.color || '',
                 size: v.size || '',
@@ -393,6 +435,61 @@ router.patch('/orders/:id/status', async (req, res) => {
   }).lean()
   if (!o) return res.status(404).json({ message: 'Không tìm thấy đơn.' })
   res.json(o)
+})
+
+/** Cập nhật đơn vị vận chuyển & mã giao hàng (khách xem qua GET đơn). */
+router.patch('/orders/:id/delivery', async (req, res) => {
+  try {
+    if (!mongoose.isValidObjectId(req.params.id)) {
+      return res.status(400).json({ message: 'ID đơn hàng không hợp lệ.' })
+    }
+
+    const current = await Order.findById(req.params.id).select('status')
+    if (!current) return res.status(404).json({ message: 'Không tìm thấy đơn.' })
+
+    if (current.status === 'CANCELLED') {
+      return res
+        .status(400)
+        .json({ message: 'Không cập nhật vận chuyển cho đơn đã hủy.' })
+    }
+    if (!['CONFIRMED', 'SHIPPING', 'COMPLETED'].includes(current.status)) {
+      return res.status(400).json({
+        message:
+          'Chỉ cập nhật khi đơn đã xác nhận, đang giao hoặc hoàn thành.',
+      })
+    }
+
+    const body = req.body && typeof req.body === 'object' ? req.body : {}
+    const hasCarrier = Object.prototype.hasOwnProperty.call(body, 'carrierName')
+    const hasTracking = Object.prototype.hasOwnProperty.call(
+      body,
+      'trackingNumber',
+    )
+    if (!hasCarrier && !hasTracking) {
+      return res.status(400).json({
+        message: 'Cần gửi carrierName và/hoặc trackingNumber.',
+      })
+    }
+
+    const $set = {}
+    if (hasCarrier) {
+      $set['delivery.carrierName'] = String(body.carrierName || '')
+        .trim()
+        .slice(0, 200)
+    }
+    if (hasTracking) {
+      $set['delivery.trackingNumber'] = String(body.trackingNumber || '')
+        .trim()
+        .slice(0, 200)
+    }
+
+    const o = await Order.findByIdAndUpdate(req.params.id, { $set }, { new: true }).lean()
+    if (!o) return res.status(404).json({ message: 'Không tìm thấy đơn.' })
+    res.json(o)
+  } catch (e) {
+    console.error(e)
+    res.status(500).json({ message: 'Không cập nhật được thông tin vận chuyển.' })
+  }
 })
 
 router.get('/users', async (_req, res) => {

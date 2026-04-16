@@ -11,6 +11,8 @@ const attributeSchema = new mongoose.Schema(
 const variantSchema = new mongoose.Schema(
   {
     key: { type: String, required: true, trim: true },
+    /** Nhãn ghép từ các giá trị thuộc tính (vd. "Mẫu A", "Chanh - 100ml") */
+    displayKey: { type: String, default: '', trim: true },
     attributeValues: {
       type: Map,
       of: String,
@@ -58,6 +60,13 @@ const productSchema = new mongoose.Schema(
     soldCount: { type: Number, default: 0 },
     wishlistCount: { type: Number, default: 0, min: 0 },
     minPrice: { type: Number, min: 0, default: 0 },
+    hasVariants: { type: Boolean, default: true },
+    price: { type: Number, min: 0, default: 0 },
+    originalPrice: { type: Number, min: 0 },
+    stock: { type: Number, min: 0, default: 0 },
+    stockQuantity: { type: Number, min: 0, default: 0 },
+    sku: { type: String, trim: true, default: '' },
+    image: { type: String, default: '' },
     attributes: [attributeSchema],
     variants: [variantSchema],
   },
@@ -65,7 +74,11 @@ const productSchema = new mongoose.Schema(
 )
 
 productSchema.pre('save', function onSave() {
+  this.hasVariants = Boolean(this.hasVariants)
   for (const v of this.variants || []) {
+    if (!v.displayKey && v.key) {
+      v.displayKey = String(v.key)
+    }
     const stock = Math.max(0, Number(v.stock ?? v.stockQuantity) || 0)
     v.stock = stock
     v.stockQuantity = stock
@@ -75,6 +88,20 @@ productSchema.pre('save', function onSave() {
     if ((!v.images || !v.images.length) && v.image) {
       v.images = [v.image]
     }
+  }
+  const first = (this.variants || [])[0]
+  if (first) {
+    this.price = Number(first.price || 0)
+    this.originalPrice =
+      first.originalPrice !== undefined ? Number(first.originalPrice) : undefined
+    const productStock = Math.max(
+      0,
+      Number(first.stock ?? first.stockQuantity) || 0,
+    )
+    this.stock = productStock
+    this.stockQuantity = productStock
+    this.sku = String(first.sku || '')
+    this.image = String(first.image || first.images?.[0] || '')
   }
   const prices = (this.variants || [])
     .map((v) => Number(v.price))

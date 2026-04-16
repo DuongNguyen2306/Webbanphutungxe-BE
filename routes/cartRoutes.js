@@ -42,6 +42,8 @@ function createHttpError(status, message) {
 }
 
 function buildVariantLabel(variant) {
+  const dk = String(variant?.displayKey || variant?.key || '').trim()
+  if (dk) return dk
   return [variant?.typeName, variant?.color, variant?.size]
     .map((x) => String(x || '').trim())
     .filter(Boolean)
@@ -57,6 +59,8 @@ function resolveVariant(product, selectedVariant) {
   }
   return (
     variants.find((v) => String(v._id) === key) ||
+    variants.find((v) => String(v.key || '').trim() === key) ||
+    variants.find((v) => String(v.displayKey || '').trim() === key) ||
     variants.find((v) => buildVariantLabel(v) === key) ||
     variants.find((v) => String(v.typeName || '').trim() === key) ||
     null
@@ -74,7 +78,7 @@ async function getOrCreateCart(userId) {
 async function assertProductVariantIsValid(item) {
   const product = await Product.findById(item.productId)
     .select(
-      'name variants._id variants.typeName variants.color variants.size variants.price',
+      'name variants._id variants.key variants.displayKey variants.typeName variants.color variants.size variants.price',
     )
     .lean()
   if (!product) {
@@ -102,7 +106,7 @@ async function buildCartResponse(userId) {
   const productIds = [...new Set(cart.products.map((i) => String(i.productId)))]
   const products = await Product.find({ _id: { $in: productIds } })
     .select(
-      'name images variants._id variants.typeName variants.color variants.size variants.price variants.images',
+      'name images variants._id variants.key variants.displayKey variants.typeName variants.color variants.size variants.price variants.images',
     )
     .lean()
   const productMap = new Map(products.map((p) => [String(p._id), p]))

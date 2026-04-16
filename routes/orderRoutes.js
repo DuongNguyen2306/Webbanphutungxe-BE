@@ -40,6 +40,12 @@ function pickText(input) {
   return String(input).trim()
 }
 
+function formatVariantLabel(v) {
+  const dk = String(v?.displayKey || v?.key || '').trim()
+  if (dk) return dk
+  return [v?.typeName, v?.color, v?.size].filter(Boolean).join(' - ')
+}
+
 function normalizeShippingAddress(input) {
   return {
     province: pickText(
@@ -228,7 +234,7 @@ router.get('/my-orders', authRequired, async (req, res) => {
     ]
     const products = await Product.find({ _id: { $in: productIds } })
       .select(
-        'name images variants._id variants.typeName variants.color variants.size variants.price variants.originalPrice variants.stockQuantity variants.isAvailable variants.sku variants.images',
+        'name images variants._id variants.key variants.displayKey variants.typeName variants.color variants.size variants.price variants.originalPrice variants.stockQuantity variants.isAvailable variants.sku variants.images',
       )
       .lean()
     const productMap = new Map(products.map((p) => [String(p._id), p]))
@@ -245,10 +251,7 @@ router.get('/my-orders', authRequired, async (req, res) => {
           ...i,
           // Lịch sử đơn hàng cần tên + thumbnail.
           name: i.name || p?.name || '',
-          variantLabel:
-            i.variantLabel ||
-            [v?.typeName, v?.color, v?.size].filter(Boolean).join(' - ') ||
-            '',
+          variantLabel: i.variantLabel || formatVariantLabel(v) || '',
           thumbnail: v?.images?.[0] || p?.images?.[0] || '',
           product: p
             ? {
@@ -260,6 +263,8 @@ router.get('/my-orders', authRequired, async (req, res) => {
           variant: v
             ? {
                 _id: v._id,
+                key: v.key || '',
+                displayKey: v.displayKey || '',
                 typeName: v.typeName || '',
                 color: v.color || '',
                 size: v.size || '',
@@ -305,7 +310,7 @@ router.get('/:id', authRequired, async (req, res) => {
     ]
     const products = await Product.find({ _id: { $in: productIds } })
       .select(
-        'name images variants._id variants.typeName variants.color variants.size variants.price variants.originalPrice variants.stockQuantity variants.isAvailable variants.sku variants.images',
+        'name images variants._id variants.key variants.displayKey variants.typeName variants.color variants.size variants.price variants.originalPrice variants.stockQuantity variants.isAvailable variants.sku variants.images',
       )
       .lean()
     const productMap = new Map(products.map((p) => [String(p._id), p]))
@@ -321,10 +326,7 @@ router.get('/:id', authRequired, async (req, res) => {
         return {
           ...i,
           name: i.name || p?.name || '',
-          variantLabel:
-            i.variantLabel ||
-            [v?.typeName, v?.color, v?.size].filter(Boolean).join(' - ') ||
-            '',
+          variantLabel: i.variantLabel || formatVariantLabel(v) || '',
           thumbnail: v?.images?.[0] || p?.images?.[0] || '',
           product: p
             ? {
@@ -336,6 +338,8 @@ router.get('/:id', authRequired, async (req, res) => {
           variant: v
             ? {
                 _id: v._id,
+                key: v.key || '',
+                displayKey: v.displayKey || '',
                 typeName: v.typeName || '',
                 color: v.color || '',
                 size: v.size || '',

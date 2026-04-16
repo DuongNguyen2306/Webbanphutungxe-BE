@@ -1,6 +1,7 @@
 const express = require('express')
 const mongoose = require('mongoose')
 const { Product } = require('../models/Product')
+const { Order } = require('../models/Order')
 const { Review } = require('../models/Review')
 const { Category } = require('../models/Category')
 const { authRequired } = require('../middleware/auth')
@@ -22,6 +23,19 @@ async function getAbsoluteMaxPrice() {
   ])
   const value = Number(rows?.[0]?.maxPrice)
   return Number.isFinite(value) ? value : 0
+}
+
+function parsePagination(req) {
+  const page = Number.parseInt(String(req.query.page ?? '1'), 10)
+  const limit = Number.parseInt(String(req.query.limit ?? '10'), 10)
+  if (!Number.isInteger(page) || page < 1) return null
+  if (!Number.isInteger(limit) || limit < 1) return null
+  const safeLimit = Math.min(limit, 50)
+  return {
+    page,
+    limit: safeLimit,
+    skip: (page - 1) * safeLimit,
+  }
 }
 
 async function assertProductVisibleForPublic(id) {
@@ -123,6 +137,62 @@ router.get('/search', async (req, res) => {
       getAbsoluteMaxPrice(),
     ])
     res.json({ items: list, absoluteMaxPrice })
+  }
+})
+
+/** GET /api/products/best-sellers?page=1&limit=10 */
+router.get('/best-sellers', async (req, res) => {
+  try {
+    const paging = parsePagination(req)
+    if (!paging) {
+      return res.status(400).json({ message: 'page/limit không hợp lệ.' })
+    }
+
+    const agg = await Order.aggregate([
+      { $match: { status: { $ne: 'CANCELLED' } } },
+      { $unwind: '$items' },
+      {
+        $group: {
+          _id: '$items.productId',
+          soldQuantity: { $sum: '$items.quantity' },
+        },
+      },
+      {
+        $lookup: {
+          from: 'products',
+          localField: '_id',
+          foreignField: '_id',
+          as: 'productDoc',
+        },
+      },
+      { $unwind: '$productDoc' },
+      { $match: { 'productDoc.showOnStorefront': { $ne: false } } },
+      { $sort: { soldQuantity: -1, 'productDoc.name': 1 } },
+      {
+        $facet: {
+          metadata: [{ $count: 'total' }],
+          rows: [{ $skip: paging.skip }, { $limit: paging.limit }],
+        },
+      },
+    ])
+
+    const total = Number(agg?.[0]?.metadata?.[0]?.total || 0)
+    const rows = Array.isArray(agg?.[0]?.rows) ? agg[0].rows : []
+    const items = rows.map((row) => ({
+      soldQuantity: Number(row.soldQuantity || 0),
+      product: row.productDoc,
+    }))
+
+    res.json({
+      items,
+      page: paging.page,
+      limit: paging.limit,
+      total,
+      totalPages: Math.ceil(total / paging.limit) || 0,
+    })
+  } catch (e) {
+    console.error(e)
+    res.status(500).json({ message: 'Không tải được sản phẩm bán chạy.' })
   }
 })
 

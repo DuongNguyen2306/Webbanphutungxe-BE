@@ -45,6 +45,11 @@ const orderSchema = new mongoose.Schema(
       ],
       default: 'PENDING',
     },
+    /** Đơn vị vận chuyển + mã vận đơn (admin nhập; khách xem khi đang giao / sau giao). */
+    delivery: {
+      carrierName: { type: String, default: '', trim: true, maxlength: 200 },
+      trackingNumber: { type: String, default: '', trim: true, maxlength: 200 },
+    },
     note: { type: String, default: '' },
   },
   { timestamps: true },
