@@ -82,7 +82,11 @@ function extractShippingAddressFromBody(body) {
       : null) ||
     (body.address && typeof body.address === 'object' ? body.address : null) ||
     body
-  return normalizeShippingAddress(source)
+  const normalized = normalizeShippingAddress(source)
+  if (!normalized.note) {
+    normalized.note = pickText(body.note ?? body.addressNote ?? body.message)
+  }
+  return normalized
 }
 
 router.post('/', authOptional, async (req, res) => {
@@ -420,7 +424,12 @@ router.patch('/:id/customer-info', authRequired, async (req, res) => {
       note:
         nextShippingInput.note !== undefined
           ? String(nextShippingInput.note || '').trim()
-          : currentShipping.note,
+          : pickText(
+              req.body?.note ??
+                req.body?.addressNote ??
+                req.body?.message ??
+                currentShipping.note,
+            ),
     }
     if (
       !nextShipping.province ||

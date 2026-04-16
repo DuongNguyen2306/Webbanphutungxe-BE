@@ -9,6 +9,11 @@ const { User } = require('../models/User')
 const { resolveCategory } = require('../lib/categories')
 const { recalculateProductRating } = require('../lib/productRating')
 const {
+  normalizeProductVariantData,
+  generateSku,
+  createValidationError,
+} = require('../lib/productVariants')
+const {
   normalizeOrderStatus,
   withUrgentFlag,
   ORDER_STATUS_OPTIONS,
@@ -16,49 +21,47 @@ const {
 
 const router = express.Router()
 
-function normalizeVariants(body) {
-  let variants = body.variants
-  if (!Array.isArray(variants)) variants = []
-  variants = variants
-    .filter((v) => v != null && v !== '' && Number(v.price) >= 0)
-    .map((v) => {
-      const row = {
-        typeName: v.typeName != null ? String(v.typeName) : '',
-        color: v.color != null ? String(v.color) : '',
-        size: v.size != null ? String(v.size) : '',
-        price: Number(v.price),
-        stockQuantity: Math.max(0, Number(v.stockQuantity) || 0),
-        originalPrice:
-          v.originalPrice != null && v.originalPrice !== ''
-            ? Number(v.originalPrice)
-            : undefined,
-        isAvailable: v.isAvailable !== false,
-        sku: v.sku != null && String(v.sku).trim() ? String(v.sku).trim() : undefined,
-        images: Array.isArray(v.images)
-          ? v.images.map((u) => String(u).trim()).filter(Boolean)
-          : [],
+function normalizeProductInput(body) {
+  return normalizeProductVariantData(body)
+}
+
+async function buildSkuAllocator(productId) {
+  const reserved = new Set()
+  return async (baseSku) => {
+    const normalizedBase = String(baseSku || '').trim()
+    if (!normalizedBase) {
+      throw createValidationError('Không thể tạo SKU tự động.')
+    }
+    let candidate = normalizedBase
+    let suffix = 0
+    while (true) {
+      const inRequest = reserved.has(candidate)
+      // eslint-disable-next-line no-await-in-loop
+      const inDb = await Product.exists({
+        _id: productId ? { $ne: productId } : { $exists: true },
+        'variants.sku': candidate,
+      })
+      if (!inRequest && !inDb) {
+        reserved.add(candidate)
+        return candidate
       }
-      if (v._id && mongoose.Types.ObjectId.isValid(String(v._id))) {
-        row._id = v._id
-      }
-      return row
-    })
-  if (!variants.length) {
-    const bp = Number(body.basePrice)
-    variants = [
-      {
-        typeName: 'Mặc định',
-        color: '',
-        size: '',
-        price: Number.isFinite(bp) ? bp : 0,
-        stockQuantity: 0,
-        isAvailable: true,
-        sku: undefined,
-        images: [],
-      },
-    ]
+      suffix += 1
+      candidate = `${normalizedBase}-${suffix}`
+    }
   }
-  return variants
+}
+
+async function ensureVariantSkus(productName, variants, productId) {
+  const allocateSku = await buildSkuAllocator(productId)
+  const out = []
+  for (const variant of variants) {
+    const row = { ...variant }
+    const draftSku = String(row.sku || '').trim() || generateSku(productName, row)
+    // eslint-disable-next-line no-await-in-loop
+    row.sku = await allocateSku(draftSku)
+    out.push(row)
+  }
+  return out
 }
 
 function getStatusFromBody(body) {
@@ -99,7 +102,8 @@ router.post('/products', async (req, res) => {
     if (!req.body.name?.trim())
       return res.status(400).json({ message: 'Tên sản phẩm là bắt buộc.' })
     const catId = await resolveCategory(req.body.category)
-    const variants = normalizeVariants(req.body)
+    const { attributes, variants } = normalizeProductInput(req.body)
+    const variantsWithSku = await ensureVariantSkus(req.body.name, variants)
     const doc = await Product.create({
       name: req.body.name.trim(),
       slug: req.body.slug,
@@ -120,12 +124,16 @@ router.post('/products', async (req, res) => {
       rating: req.body.rating ?? 4.5,
       reviewCount: req.body.reviewCount ?? 0,
       soldCount: req.body.soldCount ?? 0,
-      variants,
+      attributes,
+      variants: variantsWithSku,
     })
     const populated = await doc.populate('category', 'name')
     res.status(201).json(populated)
   } catch (e) {
     console.error(e)
+    if (e?.status) {
+      return res.status(e.status).json({ message: e.message })
+    }
     res.status(500).json({ message: 'Không tạo được sản phẩm.' })
   }
 })
@@ -151,17 +159,35 @@ router.put('/products/:id', async (req, res) => {
     if (req.body.homeFeature !== undefined) p.homeFeature = req.body.homeFeature
     if (req.body.showOnStorefront !== undefined)
       p.showOnStorefront = Boolean(req.body.showOnStorefront)
-    if (Array.isArray(req.body.variants)) {
-      p.variants = normalizeVariants({
+    if (
+      req.body.variants !== undefined ||
+      req.body.attributes !== undefined ||
+      req.body.basePrice !== undefined
+    ) {
+      const { attributes, variants } = normalizeProductInput({
         ...req.body,
-        variants: req.body.variants,
+        attributes:
+          req.body.attributes !== undefined ? req.body.attributes : p.attributes,
+        variants: req.body.variants !== undefined ? req.body.variants : p.variants,
+        basePrice:
+          req.body.basePrice !== undefined ? req.body.basePrice : p.minPrice,
       })
+      const variantsWithSku = await ensureVariantSkus(
+        req.body.name ?? p.name,
+        variants,
+        p._id,
+      )
+      p.attributes = attributes
+      p.variants = variantsWithSku
     }
     await p.save()
     const out = await Product.findById(p._id).populate('category', 'name')
     res.json(out)
   } catch (e) {
     console.error(e)
+    if (e?.status) {
+      return res.status(e.status).json({ message: e.message })
+    }
     res.status(500).json({ message: 'Cập nhật thất bại.' })
   }
 })
@@ -339,6 +365,11 @@ router.patch('/orders/:id/status', async (req, res) => {
     noteInput !== undefined && noteInput !== null
       ? String(noteInput).trim()
       : undefined
+  if (status === 'COMPLETED' && current.status !== 'SHIPPING') {
+    return res.status(400).json({
+      message: 'Chỉ được chuyển Hoàn thành khi đơn đang ở trạng thái Đang giao.',
+    })
+  }
   if (status === 'CANCELLED') {
     if (!note) {
       return res.status(400).json({ message: 'Cần nhập lý do hủy đơn.' })

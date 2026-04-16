@@ -1,17 +1,33 @@
 const mongoose = require('mongoose')
 
+const attributeSchema = new mongoose.Schema(
+  {
+    name: { type: String, required: true, trim: true },
+    values: [{ type: String, trim: true }],
+  },
+  { _id: false },
+)
+
 const variantSchema = new mongoose.Schema(
   {
+    key: { type: String, required: true, trim: true },
+    attributeValues: {
+      type: Map,
+      of: String,
+      default: {},
+    },
     /** Nhãn biến thể (vd. combo màu + hãng dài như Shopee) */
     typeName: { type: String, default: '' },
     color: { type: String, default: '' },
     /** Thuộc tính phụ: ren, size, v.v. */
     size: { type: String, default: '' },
     price: { type: Number, required: true, min: 0 },
+    stock: { type: Number, min: 0, default: 0 },
     stockQuantity: { type: Number, min: 0, default: 0 },
     originalPrice: { type: Number, min: 0 },
     isAvailable: { type: Boolean, default: true },
     sku: { type: String, trim: true },
+    image: { type: String, default: '' },
     /** Ảnh riêng từng biến thể (mỗi màu / SKU có gallery khác nhau) */
     images: [{ type: String }],
   },
@@ -42,12 +58,24 @@ const productSchema = new mongoose.Schema(
     soldCount: { type: Number, default: 0 },
     wishlistCount: { type: Number, default: 0, min: 0 },
     minPrice: { type: Number, min: 0, default: 0 },
+    attributes: [attributeSchema],
     variants: [variantSchema],
   },
   { timestamps: true },
 )
 
 productSchema.pre('save', function onSave() {
+  for (const v of this.variants || []) {
+    const stock = Math.max(0, Number(v.stock ?? v.stockQuantity) || 0)
+    v.stock = stock
+    v.stockQuantity = stock
+    if (!v.image && Array.isArray(v.images) && v.images.length) {
+      v.image = v.images[0]
+    }
+    if ((!v.images || !v.images.length) && v.image) {
+      v.images = [v.image]
+    }
+  }
   const prices = (this.variants || [])
     .map((v) => Number(v.price))
     .filter((x) => Number.isFinite(x) && x >= 0)
