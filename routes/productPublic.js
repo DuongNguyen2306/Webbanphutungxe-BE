@@ -8,6 +8,17 @@ const { recalculateProductRating } = require('../lib/productRating')
 const { maskAuthor } = require('../lib/maskAuthor')
 
 const router = express.Router()
+const STOREFRONT_FILTER = { showOnStorefront: { $ne: false } }
+
+async function getAbsoluteMaxPrice() {
+  const rows = await Product.aggregate([
+    { $match: STOREFRONT_FILTER },
+    { $unwind: '$variants' },
+    { $group: { _id: null, maxPrice: { $max: '$variants.price' } } },
+  ])
+  const value = Number(rows?.[0]?.maxPrice)
+  return Number.isFinite(value) ? value : 0
+}
 
 async function assertProductVisibleForPublic(id) {
   const p = await Product.findById(id).select('showOnStorefront').lean()
@@ -26,36 +37,43 @@ function stripUser(reviewDoc) {
 
 /** GET /api/products — danh sách SP */
 router.get('/', async (_req, res) => {
-  const list = await Product.find({ showOnStorefront: { $ne: false } })
-    .populate('category', 'name')
-    .lean()
-  res.json(list)
+  const [list, absoluteMaxPrice] = await Promise.all([
+    Product.find(STOREFRONT_FILTER).populate('category', 'name').lean(),
+    getAbsoluteMaxPrice(),
+  ])
+  res.json({ items: list, absoluteMaxPrice })
 })
 
 /** GET /api/products/search?q=... — smart search theo name/category/tags/compatibleVehicles */
 router.get('/search', async (req, res) => {
   try {
     const q = String(req.query.q || '').trim()
-    if (!q) return res.json([])
+    if (!q) {
+      const absoluteMaxPrice = await getAbsoluteMaxPrice()
+      return res.json({ items: [], absoluteMaxPrice })
+    }
     const regex = new RegExp(q, 'i')
     const catIds = await Category.find({ name: regex })
       .select('_id')
       .lean()
       .then((rows) => rows.map((r) => r._id))
 
-    const list = await Product.find({
-      showOnStorefront: { $ne: false },
-      $or: [
-        { $text: { $search: q } },
-        { name: regex },
-        { tags: regex },
-        { compatibleVehicles: regex },
-        { category: { $in: catIds } },
-      ],
-    })
-      .populate('category', 'name')
-      .lean()
-    res.json(list)
+    const [list, absoluteMaxPrice] = await Promise.all([
+      Product.find({
+        ...STOREFRONT_FILTER,
+        $or: [
+          { $text: { $search: q } },
+          { name: regex },
+          { tags: regex },
+          { compatibleVehicles: regex },
+          { category: { $in: catIds } },
+        ],
+      })
+        .populate('category', 'name')
+        .lean(),
+      getAbsoluteMaxPrice(),
+    ])
+    res.json({ items: list, absoluteMaxPrice })
   } catch (e) {
     // Fallback an toàn khi text index chưa được build.
     const q = String(req.query.q || '').trim()
@@ -64,18 +82,21 @@ router.get('/search', async (req, res) => {
       .select('_id')
       .lean()
       .then((rows) => rows.map((r) => r._id))
-    const list = await Product.find({
-      showOnStorefront: { $ne: false },
-      $or: [
-        { name: regex },
-        { tags: regex },
-        { compatibleVehicles: regex },
-        { category: { $in: catIds } },
-      ],
-    })
-      .populate('category', 'name')
-      .lean()
-    res.json(list)
+    const [list, absoluteMaxPrice] = await Promise.all([
+      Product.find({
+        ...STOREFRONT_FILTER,
+        $or: [
+          { name: regex },
+          { tags: regex },
+          { compatibleVehicles: regex },
+          { category: { $in: catIds } },
+        ],
+      })
+        .populate('category', 'name')
+        .lean(),
+      getAbsoluteMaxPrice(),
+    ])
+    res.json({ items: list, absoluteMaxPrice })
   }
 })
 
