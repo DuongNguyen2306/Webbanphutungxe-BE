@@ -6,6 +6,10 @@ const { Category } = require('../models/Category')
 const { authRequired } = require('../middleware/auth')
 const { recalculateProductRating } = require('../lib/productRating')
 const { maskAuthor } = require('../lib/maskAuthor')
+const {
+  isCloudinaryReady,
+  productUpload,
+} = require('../configs/cloudinary.config')
 
 const router = express.Router()
 const STOREFRONT_FILTER = { showOnStorefront: { $ne: false } }
@@ -34,6 +38,28 @@ function stripUser(reviewDoc) {
     author: maskAuthor(user),
   }
 }
+
+/** POST /api/products/upload — upload ảnh sản phẩm lên Cloudinary */
+router.post('/upload', authRequired, (req, res, next) => {
+  if (req.userRole !== 'admin') {
+    return res.status(403).json({ message: 'Cần quyền quản trị.' })
+  }
+  if (!isCloudinaryReady) {
+    return res.status(500).json({
+      message:
+        'Cloudinary chưa được cấu hình. Cần CLOUDINARY_CLOUD_NAME/API_KEY/API_SECRET.',
+    })
+  }
+  next()
+}, productUpload, (req, res) => {
+  if (!req.file) {
+    return res.status(400).json({ message: 'Vui lòng chọn file ảnh.' })
+  }
+  return res.status(201).json({
+    secure_url: req.file.path,
+    public_id: req.file.filename,
+  })
+})
 
 /** GET /api/products — danh sách SP */
 router.get('/', async (_req, res) => {
