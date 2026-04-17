@@ -4,6 +4,7 @@
   "description": "Thai Vũ Motoshop REST API (Express + MongoDB + Mongoose + JWT)",
   "main": "index.js",
   "scripts": {
+    "build": "node -e \"console.log('Build OK (Node.js backend - no compile step)')\"",
     "dev": "node --watch index.js",
     "start": "node index.js",
     "seed": "node seed.js",
