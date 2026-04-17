@@ -35,13 +35,10 @@ app.use(
   }),
 )
 
-const corsOrigin = process.env.CORS_ORIGIN
 app.use(
   cors({
-    origin:
-      !corsOrigin || corsOrigin === '*'
-        ? true
-        : corsOrigin.split(',').map((s) => s.trim()),
+    origin: '*',
+    methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
     credentials: true,
   }),
 )
