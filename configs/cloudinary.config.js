@@ -39,4 +39,11 @@ module.exports = {
   cloudinary,
   isCloudinaryReady,
   productUpload: upload.single('image'),
+  bannerUploadSingle: upload.single('image'),
+  bannerUploadMany: upload.array('images', 20),
+  bannerUploadFlexible: upload.fields([
+    { name: 'images', maxCount: 20 },
+    { name: 'image', maxCount: 1 },
+  ]),
+  bannerUploadAny: upload.any(),
 }

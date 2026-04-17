@@ -15,6 +15,38 @@ const {
 const router = express.Router()
 const STOREFRONT_FILTER = { showOnStorefront: { $ne: false } }
 
+function toSlug(input) {
+  return String(input || '')
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/(^-|-$)/g, '')
+}
+
+async function resolveCategoryIdsByQuery(input) {
+  const q = String(input || '').trim()
+  if (!q) return []
+  if (mongoose.isValidObjectId(q)) return [new mongoose.Types.ObjectId(q)]
+
+  const qSlug = toSlug(q)
+  const categories = await Category.find()
+    .select('_id name nameNormalized')
+    .lean()
+  return categories
+    .filter((c) => {
+      const name = String(c.name || '').trim()
+      const normalized = String(c.nameNormalized || '').trim()
+      return (
+        name.localeCompare(q, 'vi', { sensitivity: 'base' }) === 0 ||
+        normalized === q.toLowerCase() ||
+        toSlug(name) === qSlug
+      )
+    })
+    .map((c) => c._id)
+}
+
 async function getAbsoluteMaxPrice() {
   const rows = await Product.aggregate([
     { $match: STOREFRONT_FILTER },
@@ -75,13 +107,29 @@ router.post('/upload', authRequired, (req, res, next) => {
   })
 })
 
-/** GET /api/products — danh sách SP */
-router.get('/', async (_req, res) => {
-  const [list, absoluteMaxPrice] = await Promise.all([
-    Product.find(STOREFRONT_FILTER).populate('category', 'name').lean(),
-    getAbsoluteMaxPrice(),
-  ])
-  res.json({ items: list, absoluteMaxPrice })
+/** GET /api/products?category=... — danh sách SP */
+router.get('/', async (req, res) => {
+  try {
+    const categoryQuery = String(req.query.category || '').trim()
+    const filter = { ...STOREFRONT_FILTER }
+
+    if (categoryQuery) {
+      const categoryIds = await resolveCategoryIdsByQuery(categoryQuery)
+      if (!categoryIds.length) {
+        return res.json({ items: [], absoluteMaxPrice: 0 })
+      }
+      filter.category = { $in: categoryIds }
+    }
+
+    const [list, absoluteMaxPrice] = await Promise.all([
+      Product.find(filter).populate('category', 'name').lean(),
+      getAbsoluteMaxPrice(),
+    ])
+    res.json({ items: list, absoluteMaxPrice })
+  } catch (e) {
+    console.error(e)
+    res.status(500).json({ message: 'Không tải được danh sách sản phẩm.' })
+  }
 })
 
 /** GET /api/products/search?q=... — smart search theo name/category/tags/compatibleVehicles */
