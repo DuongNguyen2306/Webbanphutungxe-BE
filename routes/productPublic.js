@@ -11,6 +11,7 @@ const {
   isCloudinaryReady,
   productUpload,
 } = require('../configs/cloudinary.config')
+const { resolveExternalImageUrl } = require('../lib/externalImages')
 
 const router = express.Router()
 const STOREFRONT_FILTER = { showOnStorefront: { $ne: false } }
@@ -108,13 +109,36 @@ router.post('/upload', authRequired, (req, res, next) => {
   }
   next()
 }, productUpload, (req, res) => {
-  if (!req.file) {
-    return res.status(400).json({ message: 'Vui lòng chọn file ảnh.' })
+  if (req.file) {
+    return res.status(201).json({
+      secure_url: req.file.path,
+      public_id: req.file.filename,
+    })
   }
-  return res.status(201).json({
-    secure_url: req.file.path,
-    public_id: req.file.filename,
+  const rawExternalUrl = String(
+    req.body?.googleDriveUrl || req.body?.imageUrl || '',
+  ).trim()
+  if (!rawExternalUrl) {
+    return res.status(400).json({
+      message: 'Vui lòng chọn file ảnh hoặc gửi googleDriveUrl/imageUrl.',
+    })
+  }
+  resolveExternalImageUrl(rawExternalUrl, {
+    uploadToCloudinary: true,
+    folder: 'ThaiVu_Products',
   })
+    .then((out) =>
+      res.status(201).json({
+        secure_url: out.url,
+        public_id: out.public_id,
+      }),
+    )
+    .catch((e) => {
+      console.error(e)
+      res.status(e?.status || 500).json({
+        message: 'Không upload được ảnh từ URL bên ngoài.',
+      })
+    })
 })
 
 /** GET /api/products?category=... — danh sách SP */

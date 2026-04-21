@@ -6,6 +6,7 @@ const {
   isCloudinaryReady,
   bannerUploadAny,
 } = require('../configs/cloudinary.config')
+const { resolveExternalImageUrl } = require('../lib/externalImages')
 
 const router = express.Router()
 
@@ -35,6 +36,12 @@ function parseJsonMaybe(input) {
   } catch {
     return undefined
   }
+}
+
+function parseStringArrayMaybe(input) {
+  if (Array.isArray(input)) return input
+  const parsed = parseJsonMaybe(input)
+  return Array.isArray(parsed) ? parsed : []
 }
 
 function normalizeTextLevel(input) {
@@ -109,6 +116,23 @@ function getUploadedFiles(req) {
   return []
 }
 
+async function normalizeExternalImageList(urls) {
+  const out = []
+  for (const raw of urls) {
+    const input = String(raw || '').trim()
+    if (!input) continue
+    // Nếu có Cloudinary thì upload URL ngoài (đặc biệt Google Drive) lên Cloudinary.
+    // Nếu chưa cấu hình Cloudinary thì vẫn lưu URL đã chuẩn hóa để không chặn luồng hiện tại.
+    // eslint-disable-next-line no-await-in-loop
+    const resolved = await resolveExternalImageUrl(input, {
+      uploadToCloudinary: isCloudinaryReady,
+      folder: 'ThaiVu_Banners',
+    })
+    if (resolved.url) out.push(resolved.url)
+  }
+  return out
+}
+
 router.get('/', async (_req, res) => {
   try {
     const isAdminScope = String(_req.baseUrl || '').includes('/api/admin/')
@@ -138,14 +162,16 @@ router.post(
   async (req, res) => {
     try {
       const uploaded = getUploadedFiles(req)
-      const bodyImages = Array.isArray(req.body?.imageUrls)
-        ? req.body.imageUrls
-        : req.body?.imageUrl
-          ? [req.body.imageUrl]
-          : []
+      const bodyImages = [
+        ...parseStringArrayMaybe(req.body?.imageUrls),
+        ...(req.body?.imageUrl ? [req.body.imageUrl] : []),
+        ...parseStringArrayMaybe(req.body?.googleDriveUrls),
+        ...(req.body?.googleDriveUrl ? [req.body.googleDriveUrl] : []),
+      ]
+      const normalizedBodyImages = await normalizeExternalImageList(bodyImages)
       const imageUrls = [
         ...uploaded.map((f) => String(f.path || '').trim()),
-        ...bodyImages.map((x) => String(x || '').trim()),
+        ...normalizedBodyImages,
       ].filter(Boolean)
 
       if (!imageUrls.length) {
@@ -204,8 +230,18 @@ router.put(
 
       if (req.file?.path) {
         banner.imageUrl = String(req.file.path).trim()
-      } else if (req.body.imageUrl !== undefined) {
-        const imageUrl = String(req.body.imageUrl || '').trim()
+      } else if (
+        req.body.imageUrl !== undefined ||
+        req.body.googleDriveUrl !== undefined
+      ) {
+        const rawExternalUrl = String(
+          req.body.googleDriveUrl ?? req.body.imageUrl ?? '',
+        ).trim()
+        const resolved = await resolveExternalImageUrl(rawExternalUrl, {
+          uploadToCloudinary: isCloudinaryReady,
+          folder: 'ThaiVu_Banners',
+        })
+        const imageUrl = resolved.url
         if (!imageUrl) {
           return res.status(400).json({ message: 'imageUrl không được để trống.' })
         }
