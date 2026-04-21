@@ -427,11 +427,19 @@ router.get('/orders', async (req, res) => {
   const filter = {}
   const statusKey = normalizeFilterKey(statusQ)
   if (statusKey && !ALL_STATUS_KEYS.has(statusKey)) {
-    const normalizedStatus = normalizeOrderStatus(statusQ)
-    if (!normalizedStatus) {
-      return res.status(400).json({ message: 'Trạng thái không hợp lệ.' })
+    if (statusKey === 'CHO_XAC_NHAN') {
+      // Tab "Chờ xác nhận": gồm cả đơn chờ xử lý + đang liên hệ.
+      filter.status = { $in: ['PENDING', 'CONTACTING'] }
+    } else if (statusKey === 'CHO_GIAO_HANG' || statusKey === 'CHO_LAY_HANG') {
+      // Tab "Chờ giao hàng"/"Chờ lấy hàng": gom đơn đã xác nhận.
+      filter.status = 'CONFIRMED'
+    } else {
+      const normalizedStatus = normalizeOrderStatus(statusQ)
+      if (!normalizedStatus) {
+        return res.status(400).json({ message: 'Trạng thái không hợp lệ.' })
+      }
+      filter.status = normalizedStatus
     }
-    filter.status = normalizedStatus
   }
 
   const list = await Order.find(filter)
