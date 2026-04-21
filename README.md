@@ -116,8 +116,9 @@ Tất cả cần JWT + `role: admin`.
 | POST | `/api/admin/products` | Tạo SP; `variants` rỗng → variant mặc định, `basePrice` hoặc 0 |
 | PUT | `/api/admin/products/:id` | Cập nhật; `category` có thể ObjectId hoặc tên mới |
 | PATCH | `/api/admin/products/:productId/variants/:variantId/availability` | `{ "isAvailable": true/false }` |
+| PATCH | `/api/admin/products/:id/variant-prices` | `{ "variantPrices": [{ "variantId" \| "key", "price", "originalPrice"?: number }] }` — cập nhật giá từng biến thể |
 | DELETE | `/api/admin/reviews/:reviewId` | Xóa đánh giá; cập nhật lại `rating` / `reviewCount` trên Product |
-| GET | `/api/admin/orders` | Populate user (email, phone) |
+| GET | `/api/admin/orders` | Populate user (email, phone); hỗ trợ `?status=` (`pending`, `contacting`, `confirmed`, `shipping`, `completed`, `cancelled`, hoặc `Tất cả`) |
 | GET | `/api/admin/orders/status-options` | Trả danh sách trạng thái chuẩn để FE render dropdown |
 | PATCH | `/api/admin/orders/:id/status` | `{ "status": "pending" \| "contacting" \| "confirmed" \| "shipping" \| "completed" \| "cancelled", "note"?: "..." }` — nếu `cancelled` thì `note` là bắt buộc; chỉ hủy được khi đơn chưa xác nhận |
 | GET | `/api/admin/users` | Không trả `passwordHash` |

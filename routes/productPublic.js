@@ -85,6 +85,16 @@ function stripUser(reviewDoc) {
   }
 }
 
+function withPurchaseCount(productDoc) {
+  const sold = Number(productDoc?.soldCount ?? productDoc?.purchaseCount ?? 0)
+  const soldCount = Number.isFinite(sold) && sold >= 0 ? Math.floor(sold) : 0
+  return {
+    ...productDoc,
+    soldCount,
+    purchaseCount: soldCount,
+  }
+}
+
 /** POST /api/products/upload — upload ảnh sản phẩm lên Cloudinary */
 router.post('/upload', authRequired, (req, res, next) => {
   if (req.userRole !== 'admin') {
@@ -125,7 +135,7 @@ router.get('/', async (req, res) => {
       Product.find(filter).populate('category', 'name').lean(),
       getAbsoluteMaxPrice(),
     ])
-    res.json({ items: list, absoluteMaxPrice })
+    res.json({ items: list.map(withPurchaseCount), absoluteMaxPrice })
   } catch (e) {
     console.error(e)
     res.status(500).json({ message: 'Không tải được danh sách sản phẩm.' })
@@ -161,7 +171,7 @@ router.get('/search', async (req, res) => {
         .lean(),
       getAbsoluteMaxPrice(),
     ])
-    res.json({ items: list, absoluteMaxPrice })
+    res.json({ items: list.map(withPurchaseCount), absoluteMaxPrice })
   } catch (e) {
     // Fallback an toàn khi text index chưa được build.
     const q = String(req.query.q || '').trim()
@@ -184,7 +194,7 @@ router.get('/search', async (req, res) => {
         .lean(),
       getAbsoluteMaxPrice(),
     ])
-    res.json({ items: list, absoluteMaxPrice })
+    res.json({ items: list.map(withPurchaseCount), absoluteMaxPrice })
   }
 })
 
@@ -228,7 +238,7 @@ router.get('/best-sellers', async (req, res) => {
     const rows = Array.isArray(agg?.[0]?.rows) ? agg[0].rows : []
     const items = rows.map((row) => ({
       soldQuantity: Number(row.soldQuantity || 0),
-      product: row.productDoc,
+      product: withPurchaseCount(row.productDoc),
     }))
 
     res.json({
@@ -464,8 +474,9 @@ router.get('/:id', async (req, res) => {
   if (p.showOnStorefront === false) {
     return res.status(404).json({ message: 'Không tìm thấy sản phẩm.' })
   }
-  if (!Number.isFinite(p.wishlistCount)) p.wishlistCount = 0
-  res.json(p)
+  const out = withPurchaseCount(p)
+  if (!Number.isFinite(out.wishlistCount)) out.wishlistCount = 0
+  res.json(out)
 })
 
 module.exports = router

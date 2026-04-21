@@ -20,6 +20,7 @@ const {
 } = require('../lib/orders')
 
 const router = express.Router()
+const ALL_STATUS_KEYS = new Set(['ALL', 'TAT_CA'])
 
 function formatVariantLabel(v) {
   const dk = String(v?.displayKey || v?.key || '').trim()
@@ -81,6 +82,16 @@ function getNoteFromBody(body) {
   return body.note ?? body.reason ?? body.cancelReason
 }
 
+function normalizeFilterKey(input) {
+  return String(input || '')
+    .trim()
+    .toUpperCase()
+    .replace(/Đ/g, 'D')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[-\s]+/g, '_')
+}
+
 function buildShippingAddressText(order) {
   const a = order?.shippingAddress
   if (!a || typeof a !== 'object') return ''
@@ -90,9 +101,33 @@ function buildShippingAddressText(order) {
     .join(', ')
 }
 
+function normalizeManualSoldCount(body, fallback = 0) {
+  const raw = body?.soldCount ?? body?.purchaseCount
+  if (raw === undefined) return fallback
+  const value = Number(raw)
+  if (!Number.isFinite(value) || value < 0) return null
+  return Math.floor(value)
+}
+
+function parseNonNegativeNumber(raw) {
+  const value = Number(raw)
+  if (!Number.isFinite(value) || value < 0) return null
+  return value
+}
+
+function withManualPurchaseCount(productDoc) {
+  const sold = Number(productDoc?.soldCount ?? 0)
+  const soldCount = Number.isFinite(sold) && sold >= 0 ? Math.floor(sold) : 0
+  return {
+    ...productDoc,
+    soldCount,
+    purchaseCount: soldCount,
+  }
+}
+
 router.get('/products', async (_req, res) => {
   const list = await Product.find().populate('category', 'name').lean()
-  res.json(list)
+  res.json(list.map(withManualPurchaseCount))
 })
 
 router.get('/products/:id', async (req, res) => {
@@ -100,13 +135,17 @@ router.get('/products/:id', async (req, res) => {
     .populate('category', 'name')
     .lean()
   if (!p) return res.status(404).json({ message: 'Không tìm thấy.' })
-  res.json(p)
+  res.json(withManualPurchaseCount(p))
 })
 
 router.post('/products', async (req, res) => {
   try {
     if (!req.body.name?.trim())
       return res.status(400).json({ message: 'Tên sản phẩm là bắt buộc.' })
+    const manualSoldCount = normalizeManualSoldCount(req.body, 0)
+    if (manualSoldCount === null) {
+      return res.status(400).json({ message: 'Số lượng đã mua không hợp lệ.' })
+    }
     const catId = await resolveCategory(req.body.category)
     const normalized = normalizeProductInput(req.body)
     const variantsWithSku = await ensureVariantSkus(
@@ -132,7 +171,7 @@ router.post('/products', async (req, res) => {
       showOnStorefront: req.body.showOnStorefront !== false,
       rating: req.body.rating ?? 4.5,
       reviewCount: req.body.reviewCount ?? 0,
-      soldCount: req.body.soldCount ?? 0,
+      soldCount: manualSoldCount,
       hasVariants: normalized.hasVariants,
       price: normalized.price,
       stock: normalized.stock,
@@ -143,7 +182,7 @@ router.post('/products', async (req, res) => {
       variants: variantsWithSku,
     })
     const populated = await doc.populate('category', 'name')
-    res.status(201).json(populated)
+    res.status(201).json(withManualPurchaseCount(populated.toObject()))
   } catch (e) {
     console.error(e)
     if (e?.status) {
@@ -174,6 +213,13 @@ router.put('/products/:id', async (req, res) => {
     if (req.body.homeFeature !== undefined) p.homeFeature = req.body.homeFeature
     if (req.body.showOnStorefront !== undefined)
       p.showOnStorefront = Boolean(req.body.showOnStorefront)
+    if (req.body.soldCount !== undefined || req.body.purchaseCount !== undefined) {
+      const manualSoldCount = normalizeManualSoldCount(req.body, p.soldCount || 0)
+      if (manualSoldCount === null) {
+        return res.status(400).json({ message: 'Số lượng đã mua không hợp lệ.' })
+      }
+      p.soldCount = manualSoldCount
+    }
     if (
       req.body.hasVariants !== undefined ||
       req.body.price !== undefined ||
@@ -224,8 +270,8 @@ router.put('/products/:id', async (req, res) => {
       p.variants = variantsWithSku
     }
     await p.save()
-    const out = await Product.findById(p._id).populate('category', 'name')
-    res.json(out)
+    const out = await Product.findById(p._id).populate('category', 'name').lean()
+    res.json(withManualPurchaseCount(out))
   } catch (e) {
     console.error(e)
     if (e?.status) {
@@ -243,7 +289,7 @@ router.patch('/products/:id', async (req, res) => {
       p.showOnStorefront = Boolean(req.body.showOnStorefront)
     await p.save()
     const out = await Product.findById(p._id).populate('category', 'name').lean()
-    res.json(out)
+    res.json(withManualPurchaseCount(out))
   } catch (e) {
     console.error(e)
     res.status(500).json({ message: 'Cập nhật thất bại.' })
@@ -294,8 +340,101 @@ router.patch(
   },
 )
 
-router.get('/orders', async (_req, res) => {
-  const list = await Order.find()
+router.patch('/products/:id/variant-prices', async (req, res) => {
+  try {
+    if (!mongoose.isValidObjectId(req.params.id)) {
+      return res.status(400).json({ message: 'ID sản phẩm không hợp lệ.' })
+    }
+    const updates = Array.isArray(req.body?.variantPrices)
+      ? req.body.variantPrices
+      : Array.isArray(req.body?.items)
+        ? req.body.items
+        : []
+    if (!updates.length) {
+      return res.status(400).json({
+        message: 'Cần mảng variantPrices/items để cập nhật giá biến thể.',
+      })
+    }
+
+    const p = await Product.findById(req.params.id)
+    if (!p) return res.status(404).json({ message: 'Không tìm thấy sản phẩm.' })
+
+    let updatedCount = 0
+    for (let idx = 0; idx < updates.length; idx += 1) {
+      const row = updates[idx] || {}
+      const line = idx + 1
+      const variantId = String(row.variantId ?? row._id ?? '').trim()
+      const key = String(row.key ?? row.displayKey ?? '').trim()
+
+      const variant =
+        (variantId && mongoose.isValidObjectId(variantId) && p.variants.id(variantId)) ||
+        (key &&
+          p.variants.find(
+            (v) =>
+              String(v.key || '').trim() === key ||
+              String(v.displayKey || '').trim() === key,
+          ))
+      if (!variant) {
+        return res.status(400).json({
+          message: `Không tìm thấy biến thể ở dòng #${line}.`,
+        })
+      }
+
+      if (row.price === undefined || row.price === null || row.price === '') {
+        return res.status(400).json({
+          message: `Thiếu giá cho biến thể dòng #${line}.`,
+        })
+      }
+      const nextPrice = parseNonNegativeNumber(row.price)
+      if (nextPrice === null) {
+        return res.status(400).json({
+          message: `Giá không hợp lệ ở dòng #${line}.`,
+        })
+      }
+      variant.price = nextPrice
+
+      if (Object.prototype.hasOwnProperty.call(row, 'originalPrice')) {
+        if (
+          row.originalPrice === undefined ||
+          row.originalPrice === null ||
+          row.originalPrice === ''
+        ) {
+          variant.originalPrice = undefined
+        } else {
+          const nextOriginal = parseNonNegativeNumber(row.originalPrice)
+          if (nextOriginal === null) {
+            return res.status(400).json({
+              message: `Giá gốc không hợp lệ ở dòng #${line}.`,
+            })
+          }
+          variant.originalPrice = nextOriginal
+        }
+      }
+      updatedCount += 1
+    }
+
+    await p.save()
+    const out = await Product.findById(p._id).populate('category', 'name').lean()
+    res.json({ ok: true, updatedCount, product: withManualPurchaseCount(out) })
+  } catch (e) {
+    console.error(e)
+    res.status(500).json({ message: 'Không cập nhật được giá biến thể.' })
+  }
+})
+
+router.get('/orders', async (req, res) => {
+  const statusQ = req.query?.status
+  const filter = {}
+  const statusKey = normalizeFilterKey(statusQ)
+  if (statusKey && !ALL_STATUS_KEYS.has(statusKey)) {
+    const normalizedStatus = normalizeOrderStatus(statusQ)
+    if (!normalizedStatus) {
+      return res.status(400).json({ message: 'Trạng thái không hợp lệ.' })
+    }
+    filter.status = normalizedStatus
+  }
+
+  const list = await Order.find(filter)
     .populate('user', 'email phone')
     .sort({ createdAt: -1 })
     .lean()

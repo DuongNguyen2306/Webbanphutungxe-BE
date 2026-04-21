@@ -12,6 +12,7 @@ function normalizeFilterKey(input) {
   return String(input || '')
     .trim()
     .toUpperCase()
+    .replace(/Đ/g, 'D')
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
     .replace(/[-\s]+/g, '_')

@@ -6,7 +6,7 @@ const articleSchema = new mongoose.Schema(
     content: { type: String, required: true, trim: true },
     type: {
       type: String,
-      enum: ['intro', 'guide'],
+      enum: ['intro', 'guide', 'news'],
       required: true,
       index: true,
     },

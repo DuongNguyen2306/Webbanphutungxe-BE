@@ -4,7 +4,7 @@ const { Article } = require('../models/Article')
 const { authRequired, adminRequired } = require('../middleware/auth')
 
 const router = express.Router()
-const ARTICLE_TYPES = new Set(['intro', 'guide'])
+const ARTICLE_TYPES = new Set(['intro', 'guide', 'news'])
 
 function normalizeType(input) {
   const t = String(input || '')
@@ -35,7 +35,7 @@ router.get('/', async (req, res) => {
         .lean()
       return res.json(intro || null)
     }
-    const guides = await Article.find({ type: 'guide' })
+    const guides = await Article.find({ type })
       .sort({ createdAt: -1 })
       .lean()
     return res.json(guides)
@@ -50,7 +50,7 @@ router.post('/', authRequired, adminRequired, async (req, res) => {
     const payload = parsePayload(req.body)
     if (!payload.title || !payload.content || !payload.type) {
       return res.status(400).json({
-        message: 'Thiếu title/content/type hoặc type không hợp lệ (intro|guide).',
+        message: 'Thiếu title/content/type hoặc type không hợp lệ (intro|guide|news).',
       })
     }
     const created = await Article.create({
@@ -80,7 +80,7 @@ router.put('/:id', authRequired, adminRequired, async (req, res) => {
       if (!nextType) {
         return res
           .status(400)
-          .json({ message: 'type không hợp lệ. Chỉ nhận intro|guide.' })
+          .json({ message: 'type không hợp lệ. Chỉ nhận intro|guide|news.' })
       }
       article.type = nextType
     }
