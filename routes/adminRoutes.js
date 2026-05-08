@@ -190,6 +190,7 @@ router.post('/products', async (req, res) => {
         ? req.body.compatibleVehicles.map((x) => String(x).trim()).filter(Boolean)
         : [],
       images: Array.isArray(req.body.images) ? req.body.images : [],
+      videoUrl: String(req.body.videoUrl ?? '').trim(),
       brand: req.body.brand ?? 'honda',
       vehicleType: req.body.vehicleType ?? 'scooter',
       partCategory: req.body.partCategory ?? 'accessories',
@@ -235,6 +236,7 @@ router.put('/products/:id', async (req, res) => {
         .map((x) => String(x).trim())
         .filter(Boolean)
     if (Array.isArray(req.body.images)) p.images = req.body.images
+    if (req.body.videoUrl !== undefined) p.videoUrl = String(req.body.videoUrl).trim()
     if (req.body.brand != null) p.brand = req.body.brand
     if (req.body.vehicleType != null) p.vehicleType = req.body.vehicleType
     if (req.body.partCategory != null) p.partCategory = req.body.partCategory

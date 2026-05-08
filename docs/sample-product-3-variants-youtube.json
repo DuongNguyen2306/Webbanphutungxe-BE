@@ -1,0 +1,57 @@
+{
+  "name": "Test API — 3 phân loại + 3 biến thể + YouTube",
+  "category": "Honda",
+  "description": "3 phân loại: Màu, Size, Phiên bản — mỗi biến thể đủ 3 giá trị; kèm videoUrl.",
+  "hasVariants": true,
+  "images": [
+    "https://images.unsplash.com/photo-1558981806-ec527fa84c39?w=600&h=600&fit=crop"
+  ],
+  "videoUrl": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+  "brand": "honda",
+  "vehicleType": "scooter",
+  "partCategory": "accessories",
+  "attributes": [
+    { "name": "Màu", "values": ["Đỏ", "Xanh", "Vàng"] },
+    { "name": "Size", "values": ["S", "M", "L"] },
+    { "name": "Phiên bản", "values": ["Tiêu chuẩn", "Cao cấp"] }
+  ],
+  "variants": [
+    {
+      "attributeValues": {
+        "Màu": "Đỏ",
+        "Size": "S",
+        "Phiên bản": "Tiêu chuẩn"
+      },
+      "price": 150000,
+      "originalPrice": 180000,
+      "stock": 5,
+      "images": [
+        "https://images.unsplash.com/photo-1558981806-ec527fa84c39?w=600&h=600&fit=crop"
+      ]
+    },
+    {
+      "attributeValues": {
+        "Màu": "Xanh",
+        "Size": "M",
+        "Phiên bản": "Cao cấp"
+      },
+      "price": 195000,
+      "stock": 8,
+      "images": [
+        "https://images.unsplash.com/photo-1568772585407-9361f9bf3a87?w=600&h=600&fit=crop"
+      ]
+    },
+    {
+      "attributeValues": {
+        "Màu": "Vàng",
+        "Size": "L",
+        "Phiên bản": "Tiêu chuẩn"
+      },
+      "price": 175000,
+      "stock": 3,
+      "images": [
+        "https://images.unsplash.com/photo-1609630875171-b1321377ee65?w=600&h=600&fit=crop"
+      ]
+    }
+  ]
+}

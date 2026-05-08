@@ -49,6 +49,8 @@ const productSchema = new mongoose.Schema(
     tags: [{ type: String, trim: true, lowercase: true }],
     compatibleVehicles: [{ type: String, trim: true }],
     images: [{ type: String }],
+    /** Link video (vd. YouTube watch / youtu.be) — FE nhúng iframe/embed */
+    videoUrl: { type: String, default: '', trim: true },
     brand: { type: String, default: 'honda' },
     vehicleType: { type: String, default: 'scooter' },
     partCategory: { type: String, default: 'accessories' },
