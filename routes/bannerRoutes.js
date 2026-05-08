@@ -1,7 +1,7 @@
 const express = require('express')
 const mongoose = require('mongoose')
 const { Banner } = require('../models/Banner')
-const { authRequired, adminRequired } = require('../middleware/auth')
+const { authRequired, adminOrStaffRequired } = require('../middleware/auth')
 const {
   isCloudinaryReady,
   bannerUploadAny,
@@ -148,7 +148,7 @@ router.get('/', async (_req, res) => {
 router.post(
   '/',
   authRequired,
-  adminRequired,
+  adminOrStaffRequired,
   (req, res, next) => {
     if (isMultipartRequest(req) && !isCloudinaryReady) {
       return res.status(500).json({
@@ -207,7 +207,7 @@ router.post(
 router.put(
   '/:id',
   authRequired,
-  adminRequired,
+  adminOrStaffRequired,
   (req, res, next) => {
     if (isMultipartRequest(req)) {
       if (!isCloudinaryReady) {
@@ -285,7 +285,7 @@ router.put(
   },
 )
 
-router.delete('/:id', authRequired, adminRequired, async (req, res) => {
+router.delete('/:id', authRequired, adminOrStaffRequired, async (req, res) => {
   try {
     if (!mongoose.isValidObjectId(req.params.id)) {
       return res.status(400).json({ message: 'ID banner không hợp lệ.' })

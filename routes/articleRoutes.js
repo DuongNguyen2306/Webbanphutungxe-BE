@@ -1,7 +1,7 @@
 const express = require('express')
 const mongoose = require('mongoose')
 const { Article } = require('../models/Article')
-const { authRequired, adminRequired } = require('../middleware/auth')
+const { authRequired, adminOrStaffRequired } = require('../middleware/auth')
 
 const router = express.Router()
 const ARTICLE_TYPES = new Set(['intro', 'guide', 'news'])
@@ -45,7 +45,7 @@ router.get('/', async (req, res) => {
   }
 })
 
-router.post('/', authRequired, adminRequired, async (req, res) => {
+router.post('/', authRequired, adminOrStaffRequired, async (req, res) => {
   try {
     const payload = parsePayload(req.body)
     if (!payload.title || !payload.content || !payload.type) {
@@ -64,7 +64,7 @@ router.post('/', authRequired, adminRequired, async (req, res) => {
   }
 })
 
-router.put('/:id', authRequired, adminRequired, async (req, res) => {
+router.put('/:id', authRequired, adminOrStaffRequired, async (req, res) => {
   try {
     if (!mongoose.isValidObjectId(req.params.id)) {
       return res.status(400).json({ message: 'ID bài viết không hợp lệ.' })
@@ -100,7 +100,7 @@ router.put('/:id', authRequired, adminRequired, async (req, res) => {
   }
 })
 
-router.delete('/:id', authRequired, adminRequired, async (req, res) => {
+router.delete('/:id', authRequired, adminOrStaffRequired, async (req, res) => {
   try {
     if (!mongoose.isValidObjectId(req.params.id)) {
       return res.status(400).json({ message: 'ID bài viết không hợp lệ.' })

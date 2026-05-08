@@ -22,6 +22,13 @@ const {
 const router = express.Router()
 const ALL_STATUS_KEYS = new Set(['ALL', 'TAT_CA'])
 
+function adminOnly(req, res, next) {
+  if (req.userRole !== 'admin') {
+    return res.status(403).json({ message: 'Chỉ admin được phép thực hiện.' })
+  }
+  next()
+}
+
 function formatVariantLabel(v) {
   const dk = String(v?.displayKey || v?.key || '').trim()
   if (dk) return dk
@@ -109,6 +116,20 @@ function normalizeManualSoldCount(body, fallback = 0) {
   return Math.floor(value)
 }
 
+function normalizeBestSellerEnabled(body, fallback = false) {
+  const raw = body?.bestSellerEnabled ?? body?.isBestSeller ?? body?.showInBestSellers
+  if (raw === undefined) return fallback
+  return Boolean(raw)
+}
+
+function normalizeBestSellerOrder(body, fallback = 0) {
+  const raw = body?.bestSellerOrder ?? body?.bestSellerRank ?? body?.bestSellerPosition
+  if (raw === undefined) return fallback
+  const value = Number(raw)
+  if (!Number.isFinite(value) || value < 0) return null
+  return Math.floor(value)
+}
+
 function parseNonNegativeNumber(raw) {
   const value = Number(raw)
   if (!Number.isFinite(value) || value < 0) return null
@@ -146,6 +167,11 @@ router.post('/products', async (req, res) => {
     if (manualSoldCount === null) {
       return res.status(400).json({ message: 'Số lượng đã mua không hợp lệ.' })
     }
+    const bestSellerEnabled = normalizeBestSellerEnabled(req.body, false)
+    const bestSellerOrder = normalizeBestSellerOrder(req.body, 0)
+    if (bestSellerOrder === null) {
+      return res.status(400).json({ message: 'Thứ tự bán chạy không hợp lệ.' })
+    }
     const catId = await resolveCategory(req.body.category)
     const normalized = normalizeProductInput(req.body)
     const variantsWithSku = await ensureVariantSkus(
@@ -172,6 +198,8 @@ router.post('/products', async (req, res) => {
       rating: req.body.rating ?? 4.5,
       reviewCount: req.body.reviewCount ?? 0,
       soldCount: manualSoldCount,
+      bestSellerEnabled,
+      bestSellerOrder,
       hasVariants: normalized.hasVariants,
       price: normalized.price,
       stock: normalized.stock,
@@ -219,6 +247,30 @@ router.put('/products/:id', async (req, res) => {
         return res.status(400).json({ message: 'Số lượng đã mua không hợp lệ.' })
       }
       p.soldCount = manualSoldCount
+    }
+    if (
+      req.body.bestSellerEnabled !== undefined ||
+      req.body.isBestSeller !== undefined ||
+      req.body.showInBestSellers !== undefined
+    ) {
+      p.bestSellerEnabled = normalizeBestSellerEnabled(
+        req.body,
+        Boolean(p.bestSellerEnabled),
+      )
+    }
+    if (
+      req.body.bestSellerOrder !== undefined ||
+      req.body.bestSellerRank !== undefined ||
+      req.body.bestSellerPosition !== undefined
+    ) {
+      const bestSellerOrder = normalizeBestSellerOrder(
+        req.body,
+        Number(p.bestSellerOrder || 0),
+      )
+      if (bestSellerOrder === null) {
+        return res.status(400).json({ message: 'Thứ tự bán chạy không hợp lệ.' })
+      }
+      p.bestSellerOrder = bestSellerOrder
     }
     if (
       req.body.hasVariants !== undefined ||
@@ -639,12 +691,58 @@ router.patch('/orders/:id/delivery', async (req, res) => {
   }
 })
 
-router.get('/users', async (_req, res) => {
+router.get('/users', adminOnly, async (_req, res) => {
   const users = await User.find()
     .select('-passwordHash')
     .sort({ createdAt: -1 })
     .lean()
   res.json(users)
+})
+
+router.post('/users/staff', adminOnly, async (req, res) => {
+  try {
+    const email = String(req.body?.email || '')
+      .trim()
+      .toLowerCase()
+    const phone = String(req.body?.phone || '').trim()
+    const password = String(req.body?.password || '')
+    const displayName = String(
+      req.body?.displayName ?? req.body?.name ?? '',
+    ).trim()
+    if (!password || password.length < 6) {
+      return res.status(400).json({ message: 'Mật khẩu tối thiểu 6 ký tự.' })
+    }
+    if (!email && !phone) {
+      return res.status(400).json({ message: 'Cần email hoặc số điện thoại.' })
+    }
+    if (email) {
+      const existedEmail = await User.findOne({ email }).select('_id')
+      if (existedEmail) {
+        return res.status(409).json({ message: 'Email đã được dùng.' })
+      }
+    }
+    if (phone) {
+      const existedPhone = await User.findOne({ phone }).select('_id')
+      if (existedPhone) {
+        return res.status(409).json({ message: 'Số điện thoại đã được dùng.' })
+      }
+    }
+
+    const passwordHash = await User.hashPassword(password)
+    const created = await User.create({
+      email: email || undefined,
+      phone: phone || undefined,
+      displayName,
+      passwordHash,
+      role: 'staff',
+    })
+    const safe = created.toObject()
+    delete safe.passwordHash
+    res.status(201).json(safe)
+  } catch (e) {
+    console.error(e)
+    res.status(500).json({ message: 'Không tạo được tài khoản staff.' })
+  }
 })
 
 router.get('/categories', async (_req, res) => {

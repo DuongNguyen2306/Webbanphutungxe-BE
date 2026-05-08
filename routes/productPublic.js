@@ -1,7 +1,6 @@
 const express = require('express')
 const mongoose = require('mongoose')
 const { Product } = require('../models/Product')
-const { Order } = require('../models/Order')
 const { Review } = require('../models/Review')
 const { Category } = require('../models/Category')
 const { authRequired } = require('../middleware/auth')
@@ -230,40 +229,26 @@ router.get('/best-sellers', async (req, res) => {
       return res.status(400).json({ message: 'page/limit không hợp lệ.' })
     }
 
-    const agg = await Order.aggregate([
-      { $match: { status: { $ne: 'CANCELLED' } } },
-      { $unwind: '$items' },
-      {
-        $group: {
-          _id: '$items.productId',
-          soldQuantity: { $sum: '$items.quantity' },
-        },
-      },
-      {
-        $lookup: {
-          from: 'products',
-          localField: '_id',
-          foreignField: '_id',
-          as: 'productDoc',
-        },
-      },
-      { $unwind: '$productDoc' },
-      { $match: { 'productDoc.showOnStorefront': { $ne: false } } },
-      { $sort: { soldQuantity: -1, 'productDoc.name': 1 } },
-      {
-        $facet: {
-          metadata: [{ $count: 'total' }],
-          rows: [{ $skip: paging.skip }, { $limit: paging.limit }],
-        },
-      },
+    const filter = {
+      ...STOREFRONT_FILTER,
+      bestSellerEnabled: true,
+    }
+    const [total, rows] = await Promise.all([
+      Product.countDocuments(filter),
+      Product.find(filter)
+        .populate('category', 'name')
+        .sort({ bestSellerOrder: 1, soldCount: -1, name: 1 })
+        .skip(paging.skip)
+        .limit(paging.limit)
+        .lean(),
     ])
-
-    const total = Number(agg?.[0]?.metadata?.[0]?.total || 0)
-    const rows = Array.isArray(agg?.[0]?.rows) ? agg[0].rows : []
-    const items = rows.map((row) => ({
-      soldQuantity: Number(row.soldQuantity || 0),
-      product: withPurchaseCount(row.productDoc),
-    }))
+    const items = rows.map((row) => {
+      const product = withPurchaseCount(row)
+      return {
+        soldQuantity: Number(product.soldCount || 0),
+        product,
+      }
+    })
 
     res.json({
       items,

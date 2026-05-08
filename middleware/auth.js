@@ -42,4 +42,16 @@ function adminRequired(req, res, next) {
   next()
 }
 
-module.exports = { authRequired, authOptional, adminRequired }
+function adminOrStaffRequired(req, res, next) {
+  if (!['admin', 'staff'].includes(req.userRole)) {
+    return res.status(403).json({ message: 'Cần quyền quản trị hoặc nhân viên.' })
+  }
+  next()
+}
+
+module.exports = {
+  authRequired,
+  authOptional,
+  adminRequired,
+  adminOrStaffRequired,
+}

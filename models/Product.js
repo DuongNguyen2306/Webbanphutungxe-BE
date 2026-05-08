@@ -58,6 +58,10 @@ const productSchema = new mongoose.Schema(
     rating: { type: Number, default: 4.5 },
     reviewCount: { type: Number, default: 0 },
     soldCount: { type: Number, default: 0 },
+    /** Cấu hình thủ công để xuất hiện trong danh sách bán chạy. */
+    bestSellerEnabled: { type: Boolean, default: false },
+    /** Số nhỏ hơn sẽ đứng trước trong danh sách bán chạy. */
+    bestSellerOrder: { type: Number, default: 0 },
     wishlistCount: { type: Number, default: 0, min: 0 },
     minPrice: { type: Number, min: 0, default: 0 },
     hasVariants: { type: Boolean, default: true },
