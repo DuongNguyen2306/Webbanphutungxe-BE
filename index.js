@@ -3,7 +3,7 @@ const express = require('express')
 const cors = require('cors')
 const helmet = require('helmet')
 const rateLimit = require('express-rate-limit')
-const { connectDb } = require('./lib/db')
+const { connectDb, ensureReviewIndexes } = require('./lib/db')
 const { authRequired, adminOrStaffRequired } = require('./middleware/auth')
 const authRoutes = require('./routes/authRoutes')
 const userRoutes = require('./routes/userRoutes')
@@ -103,6 +103,7 @@ if (!process.env.JWT_SECRET) {
 }
 
 connectDb(uri)
+  .then(() => ensureReviewIndexes())
   .then(() => {
     app.listen(PORT, () => {
       console.log(`Thai Vũ API http://localhost:${PORT}`)

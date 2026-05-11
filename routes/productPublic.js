@@ -5,15 +5,38 @@ const { Review } = require('../models/Review')
 const { Category } = require('../models/Category')
 const { authRequired } = require('../middleware/auth')
 const { recalculateProductRating } = require('../lib/productRating')
-const { maskAuthor } = require('../lib/maskAuthor')
+const { toPublicReviewShape } = require('../lib/reviewPublicShape')
 const {
   isCloudinaryReady,
   productUpload,
 } = require('../configs/cloudinary.config')
 const { resolveExternalImageUrl } = require('../lib/externalImages')
+const { getRelatedProductLists } = require('../lib/productRelated')
 
 const router = express.Router()
 const STOREFRONT_FILTER = { showOnStorefront: { $ne: false } }
+
+/**
+ * Tab "N sao" trên storefront: N=5 chỉ gồm đúng 5★; N<5 gồm [N, N+1) để 2.5 thuộc tab 2 sao, 4.5 thuộc tab 4 sao.
+ */
+function reviewRatingBucketFilter(starBucket) {
+  const n = Number(starBucket)
+  if (!Number.isInteger(n) || n < 1 || n > 5) return null
+  if (n === 5) return { rating: 5 }
+  return { rating: { $gte: n, $lt: n + 1 } }
+}
+
+async function countReviewsByStarBuckets(pid) {
+  const base = { product: pid }
+  const [c5, c4, c3, c2, c1] = await Promise.all([
+    Review.countDocuments({ ...base, rating: 5 }),
+    Review.countDocuments({ ...base, rating: { $gte: 4, $lt: 5 } }),
+    Review.countDocuments({ ...base, rating: { $gte: 3, $lt: 4 } }),
+    Review.countDocuments({ ...base, rating: { $gte: 2, $lt: 3 } }),
+    Review.countDocuments({ ...base, rating: { $gte: 1, $lt: 2 } }),
+  ])
+  return { 1: c1, 2: c2, 3: c3, 4: c4, 5: c5 }
+}
 
 function toSlug(input) {
   return String(input || '')
@@ -75,14 +98,6 @@ async function assertProductVisibleForPublic(id) {
   if (!p) return null
   if (p.showOnStorefront === false) return null
   return p
-}
-
-function stripUser(reviewDoc) {
-  const { user, ...rest } = reviewDoc
-  return {
-    ...rest,
-    author: maskAuthor(user),
-  }
 }
 
 function withPurchaseCount(productDoc) {
@@ -276,16 +291,10 @@ router.get('/:id/reviews/summary', async (req, res) => {
     }
 
     const pid = new mongoose.Types.ObjectId(id)
-    const byRatingAgg = await Review.aggregate([
-      { $match: { product: pid } },
-      { $group: { _id: '$rating', count: { $sum: 1 } } },
+    const [byRating, total] = await Promise.all([
+      countReviewsByStarBuckets(pid),
+      Review.countDocuments({ product: pid }),
     ])
-    const byRating = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 }
-    let total = 0
-    for (const row of byRatingAgg) {
-      byRating[row._id] = row.count
-      total += row.count
-    }
     const avgRow = await Review.aggregate([
       { $match: { product: pid } },
       { $group: { _id: null, avg: { $avg: '$rating' } } },
@@ -340,8 +349,9 @@ router.get('/:id/reviews', async (req, res) => {
 
     const rQ = req.query.rating
     if (rQ !== undefined && rQ !== '') {
-      const r = Number(rQ)
-      if (r >= 1 && r <= 5) parts.push({ rating: r })
+      const r = Number.parseInt(String(rQ), 10)
+      const bucket = reviewRatingBucketFilter(r)
+      if (bucket) parts.push(bucket)
     }
     if (req.query.hasComment === 'true') {
       parts.push({ comment: { $regex: /\S/ } })
@@ -368,7 +378,7 @@ router.get('/:id/reviews', async (req, res) => {
     ])
 
     res.json({
-      items: items.map(stripUser),
+      items: items.map(toPublicReviewShape),
       page,
       limit,
       total,
@@ -444,6 +454,7 @@ router.post('/:id/reviews', authRequired, async (req, res) => {
       created = await Review.create({
         product: id,
         user: req.userId,
+        isStoreReview: false,
         rating: r,
         variantId: variantId || undefined,
         variantLabel: String(variantLabel).trim(),
@@ -467,10 +478,44 @@ router.post('/:id/reviews', authRequired, async (req, res) => {
     const out = await Review.findById(created._id)
       .populate('user', 'email phone')
       .lean()
-    res.status(201).json(stripUser(out))
+    res.status(201).json(toPublicReviewShape(out))
   } catch (e) {
     console.error(e)
     res.status(500).json({ message: 'Không gửi được đánh giá.' })
+  }
+})
+
+/**
+ * GET /api/products/:id/related
+ * Gợi ý: cùng danh mục (ưu tiên bán chạy); cùng hãng xe nhưng khác danh mục; lấp bằng SP bán chạy toàn shop nếu thiếu.
+ */
+router.get('/:id/related', async (req, res) => {
+  try {
+    const { id } = req.params
+    if (!mongoose.isValidObjectId(id)) {
+      return res.status(400).json({ message: 'ID sản phẩm không hợp lệ.' })
+    }
+
+    const product = await Product.findById(id)
+      .select('category brand showOnStorefront')
+      .lean()
+    if (!product || product.showOnStorefront === false) {
+      return res.status(404).json({ message: 'Không tìm thấy sản phẩm.' })
+    }
+    if (!product.category) {
+      return res.status(400).json({ message: 'Sản phẩm không gắn danh mục.' })
+    }
+
+    const categoryExists = await Category.exists({ _id: product.category })
+    if (!categoryExists) {
+      return res.status(404).json({ message: 'Không tìm thấy danh mục.' })
+    }
+
+    const payload = await getRelatedProductLists(product)
+    res.json(payload)
+  } catch (e) {
+    console.error(e)
+    res.status(500).json({ message: 'Không tải được gợi ý sản phẩm.' })
   }
 })
 

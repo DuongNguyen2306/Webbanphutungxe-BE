@@ -117,6 +117,8 @@ productSchema.pre('save', function onSave() {
 
 productSchema.index({ name: 'text', tags: 'text' })
 productSchema.index({ 'variants.sku': 1 }, { unique: true, sparse: true })
+productSchema.index({ category: 1, bestSellerEnabled: -1, soldCount: -1 })
+productSchema.index({ brand: 1, category: 1, bestSellerEnabled: -1, soldCount: -1 })
 
 const Product = mongoose.model('Product', productSchema)
 module.exports = { Product }

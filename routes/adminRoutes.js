@@ -18,6 +18,7 @@ const {
   withUrgentFlag,
   ORDER_STATUS_OPTIONS,
 } = require('../lib/orders')
+const { toPublicReviewShape } = require('../lib/reviewPublicShape')
 
 const router = express.Router()
 const ALL_STATUS_KEYS = new Set(['ALL', 'TAT_CA'])
@@ -146,6 +147,51 @@ function withManualPurchaseCount(productDoc) {
   }
 }
 
+function parseStoreReviewRating(raw) {
+  if (!Number.isFinite(Number(raw))) {
+    throw createValidationError('Thiếu hoặc sai số sao (0–5).')
+  }
+  const r = Number(raw)
+  if (r < 0 || r > 5) {
+    throw createValidationError('Số sao phải từ 0 đến 5.')
+  }
+  if (Math.round(r * 2) / 2 !== r) {
+    throw createValidationError('Số sao phải theo bước 0.5 (vd: 3, 3.5, 4).')
+  }
+  return r
+}
+
+/** Thay toàn bộ đánh giá tự đánh giá (cửa hàng) của SP; không đụng đánh giá khách. */
+async function replaceStoreReviewsForProduct(productId, items) {
+  if (!Array.isArray(items)) {
+    throw createValidationError('storeReviews phải là mảng.')
+  }
+  const normalized = []
+  for (const raw of items) {
+    const name = String(raw.reviewerDisplayName ?? raw.name ?? '').trim()
+    const comment = String(raw.comment ?? raw.description ?? '').trim()
+    const rating = parseStoreReviewRating(raw.rating ?? raw.stars)
+    if (!name) {
+      throw createValidationError(
+        'Mỗi tự đánh giá cần tên (reviewerDisplayName hoặc name).',
+      )
+    }
+    normalized.push({ reviewerDisplayName: name, comment, rating })
+  }
+  await Review.deleteMany({ product: productId, isStoreReview: true })
+  for (const row of normalized) {
+    await Review.create({
+      product: productId,
+      user: null,
+      isStoreReview: true,
+      reviewerDisplayName: row.reviewerDisplayName,
+      comment: row.comment,
+      rating: row.rating,
+    })
+  }
+  await recalculateProductRating(productId)
+}
+
 router.get('/products', async (_req, res) => {
   const list = await Product.find().populate('category', 'name').lean()
   res.json(list.map(withManualPurchaseCount))
@@ -160,6 +206,7 @@ router.get('/products/:id', async (req, res) => {
 })
 
 router.post('/products', async (req, res) => {
+  let doc
   try {
     if (!req.body.name?.trim())
       return res.status(400).json({ message: 'Tên sản phẩm là bắt buộc.' })
@@ -178,7 +225,7 @@ router.post('/products', async (req, res) => {
       req.body.name,
       normalized.variants,
     )
-    const doc = await Product.create({
+    doc = await Product.create({
       name: req.body.name.trim(),
       slug: req.body.slug,
       category: catId,
@@ -210,9 +257,17 @@ router.post('/products', async (req, res) => {
       attributes: normalized.attributes,
       variants: variantsWithSku,
     })
+    if (req.body.storeReviews !== undefined) {
+      await replaceStoreReviewsForProduct(doc._id, req.body.storeReviews)
+    }
     const populated = await doc.populate('category', 'name')
     res.status(201).json(withManualPurchaseCount(populated.toObject()))
   } catch (e) {
+    if (doc?._id) {
+      try {
+        await Product.findByIdAndDelete(doc._id)
+      } catch (_) {}
+    }
     console.error(e)
     if (e?.status) {
       return res.status(e.status).json({ message: e.message })
@@ -324,6 +379,9 @@ router.put('/products/:id', async (req, res) => {
       p.variants = variantsWithSku
     }
     await p.save()
+    if (req.body.storeReviews !== undefined) {
+      await replaceStoreReviewsForProduct(p._id, req.body.storeReviews)
+    }
     const out = await Product.findById(p._id).populate('category', 'name').lean()
     res.json(withManualPurchaseCount(out))
   } catch (e) {
@@ -332,6 +390,85 @@ router.put('/products/:id', async (req, res) => {
       return res.status(e.status).json({ message: e.message })
     }
     res.status(500).json({ message: 'Cập nhật thất bại.' })
+  }
+})
+
+router.post('/products/:productId/store-reviews', async (req, res) => {
+  try {
+    const { productId } = req.params
+    if (!mongoose.isValidObjectId(productId)) {
+      return res.status(400).json({ message: 'ID sản phẩm không hợp lệ.' })
+    }
+    const product = await Product.findById(productId)
+    if (!product) return res.status(404).json({ message: 'Không tìm thấy sản phẩm.' })
+    const name = String(req.body.reviewerDisplayName ?? req.body.name ?? '').trim()
+    const comment = String(req.body.comment ?? req.body.description ?? '').trim()
+    if (!name) {
+      return res.status(400).json({ message: 'Tên hiển thị đánh giá là bắt buộc.' })
+    }
+    const rating = parseStoreReviewRating(req.body.rating ?? req.body.stars)
+    const created = await Review.create({
+      product: productId,
+      user: null,
+      isStoreReview: true,
+      reviewerDisplayName: name,
+      comment,
+      rating,
+    })
+    await recalculateProductRating(productId)
+    const out = await Review.findById(created._id).populate('user', 'email phone').lean()
+    res.status(201).json(toPublicReviewShape(out))
+  } catch (e) {
+    console.error(e)
+    if (e?.status) {
+      return res.status(e.status).json({ message: e.message })
+    }
+    res.status(500).json({ message: 'Không tạo được đánh giá tự đánh giá.' })
+  }
+})
+
+router.patch('/reviews/:reviewId', async (req, res) => {
+  try {
+    if (!mongoose.isValidObjectId(req.params.reviewId)) {
+      return res.status(400).json({ message: 'ID đánh giá không hợp lệ.' })
+    }
+    const r = await Review.findById(req.params.reviewId)
+    if (!r) return res.status(404).json({ message: 'Không tìm thấy đánh giá.' })
+    if (!r.isStoreReview) {
+      return res
+        .status(400)
+        .json({ message: 'Chỉ có thể sửa đánh giá tự đánh giá (cửa hàng).' })
+    }
+    if (req.body.reviewerDisplayName !== undefined || req.body.name !== undefined) {
+      const name = String(req.body.reviewerDisplayName ?? req.body.name ?? '').trim()
+      if (!name) {
+        return res.status(400).json({ message: 'Tên hiển thị không được để trống.' })
+      }
+      r.reviewerDisplayName = name
+    }
+    if (req.body.comment !== undefined || req.body.description !== undefined) {
+      r.comment = String(req.body.comment ?? req.body.description ?? '').trim()
+    }
+    if (req.body.rating !== undefined || req.body.stars !== undefined) {
+      try {
+        r.rating = parseStoreReviewRating(req.body.rating ?? req.body.stars)
+      } catch (e) {
+        if (e?.status) {
+          return res.status(e.status).json({ message: e.message })
+        }
+        throw e
+      }
+    }
+    await r.save()
+    await recalculateProductRating(r.product)
+    const out = await Review.findById(r._id).populate('user', 'email phone').lean()
+    res.json(toPublicReviewShape(out))
+  } catch (e) {
+    console.error(e)
+    if (e?.status) {
+      return res.status(e.status).json({ message: e.message })
+    }
+    res.status(500).json({ message: 'Không cập nhật được đánh giá.' })
   }
 })
 
