@@ -9,7 +9,7 @@
   "videoUrl": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
   "brand": "honda",
   "vehicleType": "scooter",
-  "partCategory": "accessories",
+  "partCategory": "phụ kiện",
   "attributes": [
     { "name": "Màu", "values": ["Đỏ", "Xanh", "Vàng"] },
     { "name": "Size", "values": ["S", "M", "L"] },

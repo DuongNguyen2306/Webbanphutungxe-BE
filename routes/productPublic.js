@@ -487,7 +487,7 @@ router.post('/:id/reviews', authRequired, async (req, res) => {
 
 /**
  * GET /api/products/:id/related
- * Gợi ý: cùng danh mục (ưu tiên bán chạy); cùng hãng xe nhưng khác danh mục; lấp bằng SP bán chạy toàn shop nếu thiếu.
+ * relatedByCategory: chỉ SP cùng partCategory (không lấp thêm). relatedByBrand: cùng brand khác loại; thiếu có thể lấp bán chạy.
  */
 router.get('/:id/related', async (req, res) => {
   try {
@@ -497,18 +497,10 @@ router.get('/:id/related', async (req, res) => {
     }
 
     const product = await Product.findById(id)
-      .select('category brand showOnStorefront')
+      .select('category brand partCategory showOnStorefront')
       .lean()
     if (!product || product.showOnStorefront === false) {
       return res.status(404).json({ message: 'Không tìm thấy sản phẩm.' })
-    }
-    if (!product.category) {
-      return res.status(400).json({ message: 'Sản phẩm không gắn danh mục.' })
-    }
-
-    const categoryExists = await Category.exists({ _id: product.category })
-    if (!categoryExists) {
-      return res.status(404).json({ message: 'Không tìm thấy danh mục.' })
     }
 
     const payload = await getRelatedProductLists(product)

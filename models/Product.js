@@ -53,8 +53,7 @@ const productSchema = new mongoose.Schema(
     videoUrl: { type: String, default: '', trim: true },
     brand: { type: String, default: 'honda' },
     vehicleType: { type: String, default: 'scooter' },
-    partCategory: { type: String, default: 'accessories' },
-    homeFeature: { type: String, default: null },
+    partCategory: { type: String, default: 'phụ kiện' },
     /** false = ẩn khỏi danh sách /api/products (cửa hàng); admin vẫn xem được */
     showOnStorefront: { type: Boolean, default: true },
     rating: { type: Number, default: 4.5 },

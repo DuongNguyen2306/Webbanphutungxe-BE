@@ -19,6 +19,10 @@ const {
   ORDER_STATUS_OPTIONS,
 } = require('../lib/orders')
 const { toPublicReviewShape } = require('../lib/reviewPublicShape')
+const {
+  DEFAULT_PART_CATEGORY,
+  resolvePartCategory,
+} = require('../lib/partCategories')
 
 const router = express.Router()
 const ALL_STATUS_KEYS = new Set(['ALL', 'TAT_CA'])
@@ -219,6 +223,17 @@ router.post('/products', async (req, res) => {
     if (bestSellerOrder === null) {
       return res.status(400).json({ message: 'Thứ tự bán chạy không hợp lệ.' })
     }
+    let partCategory = DEFAULT_PART_CATEGORY
+    if (req.body.partCategory != null && req.body.partCategory !== '') {
+      const resolved = resolvePartCategory(req.body.partCategory)
+      if (!resolved) {
+        return res.status(400).json({
+          message:
+            'Loại phụ tùng (partCategory) không hợp lệ. Xem GET /api/part-categories.',
+        })
+      }
+      partCategory = resolved
+    }
     const catId = await resolveCategory(req.body.category)
     const normalized = normalizeProductInput(req.body)
     const variantsWithSku = await ensureVariantSkus(
@@ -240,8 +255,7 @@ router.post('/products', async (req, res) => {
       videoUrl: String(req.body.videoUrl ?? '').trim(),
       brand: req.body.brand ?? 'honda',
       vehicleType: req.body.vehicleType ?? 'scooter',
-      partCategory: req.body.partCategory ?? 'accessories',
-      homeFeature: req.body.homeFeature || null,
+      partCategory,
       showOnStorefront: req.body.showOnStorefront !== false,
       rating: req.body.rating ?? 4.5,
       reviewCount: req.body.reviewCount ?? 0,
@@ -294,8 +308,16 @@ router.put('/products/:id', async (req, res) => {
     if (req.body.videoUrl !== undefined) p.videoUrl = String(req.body.videoUrl).trim()
     if (req.body.brand != null) p.brand = req.body.brand
     if (req.body.vehicleType != null) p.vehicleType = req.body.vehicleType
-    if (req.body.partCategory != null) p.partCategory = req.body.partCategory
-    if (req.body.homeFeature !== undefined) p.homeFeature = req.body.homeFeature
+    if (req.body.partCategory != null && req.body.partCategory !== '') {
+      const resolved = resolvePartCategory(req.body.partCategory)
+      if (!resolved) {
+        return res.status(400).json({
+          message:
+            'Loại phụ tùng (partCategory) không hợp lệ. Xem GET /api/part-categories.',
+        })
+      }
+      p.partCategory = resolved
+    }
     if (req.body.showOnStorefront !== undefined)
       p.showOnStorefront = Boolean(req.body.showOnStorefront)
     if (req.body.soldCount !== undefined || req.body.purchaseCount !== undefined) {
