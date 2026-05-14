@@ -54,6 +54,8 @@ const productSchema = new mongoose.Schema(
     brand: { type: String, default: 'honda' },
     vehicleType: { type: String, default: 'scooter' },
     partCategory: { type: String, default: 'phụ kiện' },
+    /** Khi partCategory = "khác": mô tả tay (vd. "Bơm xăng điện"). Không dùng để lọc gợi ý. */
+    partCategoryNote: { type: String, default: '', trim: true },
     /** false = ẩn khỏi danh sách /api/products (cửa hàng); admin vẫn xem được */
     showOnStorefront: { type: Boolean, default: true },
     rating: { type: Number, default: 4.5 },
@@ -112,6 +114,15 @@ productSchema.pre('save', function onSave() {
     .map((v) => Number(v.price))
     .filter((x) => Number.isFinite(x) && x >= 0)
   this.minPrice = prices.length ? Math.min(...prices) : 0
+
+  const pc = String(this.partCategory || '').trim()
+  if (pc !== 'khác') {
+    this.partCategoryNote = ''
+  } else {
+    this.partCategoryNote = String(this.partCategoryNote ?? '')
+      .trim()
+      .slice(0, 200)
+  }
 })
 
 productSchema.index({ name: 'text', tags: 'text' })

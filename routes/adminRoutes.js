@@ -256,6 +256,10 @@ router.post('/products', async (req, res) => {
       brand: req.body.brand ?? 'honda',
       vehicleType: req.body.vehicleType ?? 'scooter',
       partCategory,
+      partCategoryNote:
+        req.body.partCategoryNote !== undefined
+          ? String(req.body.partCategoryNote)
+          : '',
       showOnStorefront: req.body.showOnStorefront !== false,
       rating: req.body.rating ?? 4.5,
       reviewCount: req.body.reviewCount ?? 0,
@@ -317,6 +321,9 @@ router.put('/products/:id', async (req, res) => {
         })
       }
       p.partCategory = resolved
+    }
+    if (req.body.partCategoryNote !== undefined) {
+      p.partCategoryNote = String(req.body.partCategoryNote)
     }
     if (req.body.showOnStorefront !== undefined)
       p.showOnStorefront = Boolean(req.body.showOnStorefront)
