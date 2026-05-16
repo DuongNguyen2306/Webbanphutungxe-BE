@@ -12,6 +12,7 @@ const {
 } = require('../configs/cloudinary.config')
 const { resolveExternalImageUrl } = require('../lib/externalImages')
 const { getRelatedProductLists } = require('../lib/productRelated')
+const { sortProductsByBadgeTagsThenName } = require('../lib/productBadgeTags')
 
 const router = express.Router()
 const STOREFRONT_FILTER = { showOnStorefront: { $ne: false } }
@@ -173,7 +174,8 @@ router.get('/', async (req, res) => {
       Product.find(filter).populate('category', 'name').lean(),
       getAbsoluteMaxPrice(),
     ])
-    res.json({ items: list.map(withPurchaseCount), absoluteMaxPrice })
+    const items = sortProductsByBadgeTagsThenName(list.map(withPurchaseCount))
+    res.json({ items, absoluteMaxPrice })
   } catch (e) {
     console.error(e)
     res.status(500).json({ message: 'Không tải được danh sách sản phẩm.' })
@@ -209,7 +211,8 @@ router.get('/search', async (req, res) => {
         .lean(),
       getAbsoluteMaxPrice(),
     ])
-    res.json({ items: list.map(withPurchaseCount), absoluteMaxPrice })
+    const items = sortProductsByBadgeTagsThenName(list.map(withPurchaseCount))
+    res.json({ items, absoluteMaxPrice })
   } catch (e) {
     // Fallback an toàn khi text index chưa được build.
     const q = String(req.query.q || '').trim()
@@ -232,7 +235,44 @@ router.get('/search', async (req, res) => {
         .lean(),
       getAbsoluteMaxPrice(),
     ])
-    res.json({ items: list.map(withPurchaseCount), absoluteMaxPrice })
+    const items = sortProductsByBadgeTagsThenName(list.map(withPurchaseCount))
+    res.json({ items, absoluteMaxPrice })
+  }
+})
+
+/** GET /api/products/new-arrivals?page=1&limit=10 — Hàng mới về (admin bật newArrivalEnabled + thứ tự newArrivalOrder) */
+router.get('/new-arrivals', async (req, res) => {
+  try {
+    const paging = parsePagination(req)
+    if (!paging) {
+      return res.status(400).json({ message: 'page/limit không hợp lệ.' })
+    }
+
+    const filter = {
+      ...STOREFRONT_FILTER,
+      newArrivalEnabled: true,
+    }
+    const [total, rows] = await Promise.all([
+      Product.countDocuments(filter),
+      Product.find(filter)
+        .populate('category', 'name')
+        .sort({ newArrivalOrder: 1, createdAt: -1, name: 1 })
+        .skip(paging.skip)
+        .limit(paging.limit)
+        .lean(),
+    ])
+    const items = rows.map(withPurchaseCount)
+
+    res.json({
+      items,
+      page: paging.page,
+      limit: paging.limit,
+      total,
+      totalPages: Math.ceil(total / paging.limit) || 0,
+    })
+  } catch (e) {
+    console.error(e)
+    res.status(500).json({ message: 'Không tải được hàng mới về.' })
   }
 })
 

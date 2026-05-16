@@ -23,6 +23,7 @@ const {
   DEFAULT_PART_CATEGORY,
   resolvePartCategory,
 } = require('../lib/partCategories')
+const { normalizeBadgeTags } = require('../lib/productBadgeTags')
 
 const router = express.Router()
 const ALL_STATUS_KEYS = new Set(['ALL', 'TAT_CA'])
@@ -135,6 +136,27 @@ function normalizeBestSellerOrder(body, fallback = 0) {
   return Math.floor(value)
 }
 
+function normalizeNewArrivalEnabled(body, fallback = false) {
+  const raw =
+    body?.newArrivalEnabled ??
+    body?.showInNewArrivals ??
+    body?.isNewArrival ??
+    body?.hangMoiVe
+  if (raw === undefined) return fallback
+  return Boolean(raw)
+}
+
+function normalizeNewArrivalOrder(body, fallback = 0) {
+  const raw =
+    body?.newArrivalOrder ??
+    body?.newArrivalRank ??
+    body?.newArrivalPosition
+  if (raw === undefined) return fallback
+  const value = Number(raw)
+  if (!Number.isFinite(value) || value < 0) return null
+  return Math.floor(value)
+}
+
 function parseNonNegativeNumber(raw) {
   const value = Number(raw)
   if (!Number.isFinite(value) || value < 0) return null
@@ -223,6 +245,11 @@ router.post('/products', async (req, res) => {
     if (bestSellerOrder === null) {
       return res.status(400).json({ message: 'Thứ tự bán chạy không hợp lệ.' })
     }
+    const newArrivalEnabled = normalizeNewArrivalEnabled(req.body, false)
+    const newArrivalOrder = normalizeNewArrivalOrder(req.body, 0)
+    if (newArrivalOrder === null) {
+      return res.status(400).json({ message: 'Thứ tự hàng mới về không hợp lệ.' })
+    }
     let partCategory = DEFAULT_PART_CATEGORY
     if (req.body.partCategory != null && req.body.partCategory !== '') {
       const resolved = resolvePartCategory(req.body.partCategory)
@@ -248,6 +275,7 @@ router.post('/products', async (req, res) => {
       tags: Array.isArray(req.body.tags)
         ? req.body.tags.map((x) => String(x).trim().toLowerCase()).filter(Boolean)
         : [],
+      badgeTags: normalizeBadgeTags(req.body.badgeTags),
       compatibleVehicles: Array.isArray(req.body.compatibleVehicles)
         ? req.body.compatibleVehicles.map((x) => String(x).trim()).filter(Boolean)
         : [],
@@ -266,6 +294,8 @@ router.post('/products', async (req, res) => {
       soldCount: manualSoldCount,
       bestSellerEnabled,
       bestSellerOrder,
+      newArrivalEnabled,
+      newArrivalOrder,
       hasVariants: normalized.hasVariants,
       price: normalized.price,
       stock: normalized.stock,
@@ -304,6 +334,8 @@ router.put('/products/:id', async (req, res) => {
     if (req.body.description != null) p.description = req.body.description
     if (Array.isArray(req.body.tags))
       p.tags = req.body.tags.map((x) => String(x).trim().toLowerCase()).filter(Boolean)
+    if (Array.isArray(req.body.badgeTags))
+      p.badgeTags = normalizeBadgeTags(req.body.badgeTags)
     if (Array.isArray(req.body.compatibleVehicles))
       p.compatibleVehicles = req.body.compatibleVehicles
         .map((x) => String(x).trim())
@@ -357,6 +389,31 @@ router.put('/products/:id', async (req, res) => {
         return res.status(400).json({ message: 'Thứ tự bán chạy không hợp lệ.' })
       }
       p.bestSellerOrder = bestSellerOrder
+    }
+    if (
+      req.body.newArrivalEnabled !== undefined ||
+      req.body.showInNewArrivals !== undefined ||
+      req.body.isNewArrival !== undefined ||
+      req.body.hangMoiVe !== undefined
+    ) {
+      p.newArrivalEnabled = normalizeNewArrivalEnabled(
+        req.body,
+        Boolean(p.newArrivalEnabled),
+      )
+    }
+    if (
+      req.body.newArrivalOrder !== undefined ||
+      req.body.newArrivalRank !== undefined ||
+      req.body.newArrivalPosition !== undefined
+    ) {
+      const newArrivalOrder = normalizeNewArrivalOrder(
+        req.body,
+        Number(p.newArrivalOrder || 0),
+      )
+      if (newArrivalOrder === null) {
+        return res.status(400).json({ message: 'Thứ tự hàng mới về không hợp lệ.' })
+      }
+      p.newArrivalOrder = newArrivalOrder
     }
     if (
       req.body.hasVariants !== undefined ||

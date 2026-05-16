@@ -1,4 +1,5 @@
 const mongoose = require('mongoose')
+const { normalizeBadgeTags } = require('../lib/productBadgeTags')
 
 const attributeSchema = new mongoose.Schema(
   {
@@ -46,7 +47,16 @@ const productSchema = new mongoose.Schema(
       required: true,
     },
     description: { type: String, default: '' },
+    /** Từ khóa tìm kiếm / SEO (chữ thường). */
     tags: [{ type: String, trim: true, lowercase: true }],
+    /**
+     * Nhãn cửa hàng: hàng mới, bán chạy, nổi bật (sắp xếp GET /api/products).
+     * Giá trị hợp lệ: 'new' | 'best-seller' | 'featured'.
+     */
+    badgeTags: {
+      type: [{ type: String, enum: ['new', 'best-seller', 'featured'] }],
+      default: [],
+    },
     compatibleVehicles: [{ type: String, trim: true }],
     images: [{ type: String }],
     /** Link video (vd. YouTube watch / youtu.be) — FE nhúng iframe/embed */
@@ -65,6 +75,10 @@ const productSchema = new mongoose.Schema(
     bestSellerEnabled: { type: Boolean, default: false },
     /** Số nhỏ hơn sẽ đứng trước trong danh sách bán chạy. */
     bestSellerOrder: { type: Number, default: 0 },
+    /** Bật trong khối "Hàng mới về" trên storefront — chọn tay trong admin (không phụ thuộc badge `new`). */
+    newArrivalEnabled: { type: Boolean, default: false },
+    /** Số nhỏ hơn đứng trước trong danh sách hàng mới về. */
+    newArrivalOrder: { type: Number, default: 0 },
     wishlistCount: { type: Number, default: 0, min: 0 },
     minPrice: { type: Number, min: 0, default: 0 },
     hasVariants: { type: Boolean, default: true },
@@ -115,6 +129,8 @@ productSchema.pre('save', function onSave() {
     .filter((x) => Number.isFinite(x) && x >= 0)
   this.minPrice = prices.length ? Math.min(...prices) : 0
 
+  this.badgeTags = normalizeBadgeTags(this.badgeTags)
+
   const pc = String(this.partCategory || '').trim()
   if (pc !== 'khác') {
     this.partCategoryNote = ''
@@ -129,6 +145,11 @@ productSchema.index({ name: 'text', tags: 'text' })
 productSchema.index({ 'variants.sku': 1 }, { unique: true, sparse: true })
 productSchema.index({ category: 1, bestSellerEnabled: -1, soldCount: -1 })
 productSchema.index({ brand: 1, category: 1, bestSellerEnabled: -1, soldCount: -1 })
+productSchema.index({
+  newArrivalEnabled: 1,
+  newArrivalOrder: 1,
+  createdAt: -1,
+})
 
 const Product = mongoose.model('Product', productSchema)
 module.exports = { Product }

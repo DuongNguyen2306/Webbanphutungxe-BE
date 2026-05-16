@@ -20,19 +20,22 @@ const orderSchema = new mongoose.Schema(
   {
     user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
     contact: {
-      name: { type: String, default: '' },
-      email: { type: String, default: '' },
-      phone: { type: String, default: '' },
+      name: { type: String, default: '', trim: true, required: false },
+      email: { type: String, default: '', trim: true, required: false },
+      phone: { type: String, default: '', trim: true, required: false },
     },
     shippingAddress: {
-      province: { type: String, default: '', trim: true },
-      district: { type: String, default: '', trim: true },
-      ward: { type: String, default: '', trim: true },
-      detail: { type: String, default: '', trim: true },
+      province: { type: String, default: '', trim: true, required: false },
+      district: { type: String, default: '', trim: true, required: false },
+      ward: { type: String, default: '', trim: true, required: false },
+      /** Địa chỉ cụ thể (số nhà, đường…). Không bắt buộc — khách có thể đặt chỉ qua SĐT. */
+      detail: { type: String, default: '', trim: true, required: false },
       note: { type: String, default: '', trim: true },
     },
     items: [orderItemSchema],
     totalAmount: { type: Number, required: true, min: 0 },
+    /** Phí vận chuyển — luôn 0; shop liên hệ tư vấn, không tính phí qua API. */
+    shippingFee: { type: Number, default: 0, min: 0 },
     status: {
       type: String,
       enum: [

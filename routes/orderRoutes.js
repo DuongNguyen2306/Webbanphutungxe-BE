@@ -106,23 +106,17 @@ router.post('/', authOptional, async (req, res) => {
     const { contact, items, totalAmount } = req.body
     if (!contact || !items?.length)
       return res.status(400).json({ message: 'Thiếu thông tin đơn hàng.' })
-    const { name = '', email = '', phone = '' } = contact
-    if (!String(email).trim() && !String(phone).trim())
-      return res.status(400).json({ message: 'Cần email hoặc SĐT liên hệ.' })
-
-    const shipping = extractShippingAddressFromBody(req.body)
-    if (
-      !shipping.province ||
-      !shipping.district ||
-      !shipping.ward ||
-      !shipping.detail
-    ) {
-      return res.status(400).json({
-        message:
-          'Thiếu địa chỉ giao hàng (cần tỉnh/thành, quận/huyện, phường/xã, địa chỉ chi tiết).',
-      })
+    const name = String(contact.name ?? '').trim()
+    const phone = String(contact.phone ?? contact.phoneNumber ?? '').trim()
+    const email = String(contact.email ?? '').trim()
+    if (!name) {
+      return res.status(400).json({ message: 'Cần họ tên người nhận.' })
+    }
+    if (!phone) {
+      return res.status(400).json({ message: 'Cần số điện thoại liên hệ.' })
     }
 
+    const shipping = extractShippingAddressFromBody(req.body)
     const normalized = items.map((i) => ({
       productId: i.productId,
       variantId: i.variantId,
@@ -168,15 +162,21 @@ router.post('/', authOptional, async (req, res) => {
       user: req.userId || null,
       contact: {
         name,
-        email: String(email).trim(),
-        phone: String(phone).trim(),
+        email,
+        phone,
       },
       shippingAddress: shipping,
       items: normalized,
       totalAmount: sum,
+      shippingFee: 0,
       status: 'PENDING',
     })
-    res.status(201).json({ orderId: order._id, message: 'OK' })
+    res.status(201).json({
+      orderId: order._id,
+      shippingFee: 0,
+      message:
+        'Đã nhận đơn. Nhân viên sẽ liên hệ tư vấn qua SĐT trên.',
+    })
   } catch (e) {
     console.error(e)
     res.status(500).json({ message: 'Không tạo được đơn hàng.' })
@@ -396,12 +396,15 @@ router.patch('/:id/customer-info', authRequired, async (req, res) => {
       phone:
         nextContactInput.phone !== undefined
           ? String(nextContactInput.phone || '').trim()
-          : String(currentContact.phone || '').trim(),
+          : nextContactInput.phoneNumber !== undefined
+            ? String(nextContactInput.phoneNumber || '').trim()
+            : String(currentContact.phone || '').trim(),
     }
-    if (!nextContact.email && !nextContact.phone) {
-      return res
-        .status(400)
-        .json({ message: 'Cần email hoặc SĐT liên hệ cho đơn hàng.' })
+    if (!nextContact.name) {
+      return res.status(400).json({ message: 'Cần họ tên người nhận.' })
+    }
+    if (!nextContact.phone) {
+      return res.status(400).json({ message: 'Cần số điện thoại liên hệ.' })
     }
 
     const currentShipping = normalizeShippingAddress(order.shippingAddress || {})
@@ -436,18 +439,6 @@ router.patch('/:id/customer-info', authRequired, async (req, res) => {
                 currentShipping.note,
             ),
     }
-    if (
-      !nextShipping.province ||
-      !nextShipping.district ||
-      !nextShipping.ward ||
-      !nextShipping.detail
-    ) {
-      return res.status(400).json({
-        message:
-          'Thiếu địa chỉ giao hàng (cần tỉnh/thành, quận/huyện, phường/xã, địa chỉ chi tiết).',
-      })
-    }
-
     order.contact = nextContact
     order.shippingAddress = nextShipping
     await order.save()
