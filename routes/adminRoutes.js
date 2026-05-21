@@ -24,6 +24,12 @@ const {
   resolvePartCategory,
 } = require('../lib/partCategories')
 const { normalizeBadgeTags } = require('../lib/productBadgeTags')
+const { enrichOrder } = require('../lib/orderEnrich')
+const {
+  parseExportDateRange,
+  buildOrdersExcelBuffer,
+} = require('../lib/orderExport')
+const { buildStatusHistoryEntry } = require('../lib/orderStatusHistory')
 
 const router = express.Router()
 const ALL_STATUS_KEYS = new Set(['ALL', 'TAT_CA'])
@@ -33,12 +39,6 @@ function adminOnly(req, res, next) {
     return res.status(403).json({ message: 'Chỉ admin được phép thực hiện.' })
   }
   next()
-}
-
-function formatVariantLabel(v) {
-  const dk = String(v?.displayKey || v?.key || '').trim()
-  if (dk) return dk
-  return [v?.typeName, v?.color, v?.size].filter(Boolean).join(' - ')
 }
 
 function normalizeProductInput(body) {
@@ -95,6 +95,20 @@ function getNoteFromBody(body) {
   return body.note ?? body.reason ?? body.cancelReason
 }
 
+function pickProcessedBy(body) {
+  if (!body || typeof body !== 'object') return undefined
+  if (
+    !Object.prototype.hasOwnProperty.call(body, 'processedBy') &&
+    !Object.prototype.hasOwnProperty.call(body, 'employeeName')
+  ) {
+    return undefined
+  }
+  const raw = body.processedBy ?? body.employeeName
+  if (raw === null) return null
+  const s = String(raw ?? '').trim()
+  return s ? s.slice(0, 120) : null
+}
+
 function normalizeFilterKey(input) {
   return String(input || '')
     .trim()
@@ -103,15 +117,6 @@ function normalizeFilterKey(input) {
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
     .replace(/[-\s]+/g, '_')
-}
-
-function buildShippingAddressText(order) {
-  const a = order?.shippingAddress
-  if (!a || typeof a !== 'object') return ''
-  return [a.detail, a.ward, a.district, a.province]
-    .map((x) => String(x || '').trim())
-    .filter(Boolean)
-    .join(', ')
 }
 
 function normalizeManualSoldCount(body, fallback = 0) {
@@ -742,6 +747,29 @@ router.get('/orders/urgent', async (_req, res) => {
   res.json(list.map(withUrgentFlag))
 })
 
+router.get('/orders/export-excel', async (req, res) => {
+  try {
+    const range = parseExportDateRange(req.query.startDate, req.query.endDate)
+    if (range.error) {
+      return res.status(400).json({ message: range.error })
+    }
+    const buffer = await buildOrdersExcelBuffer(range.start, range.end)
+    const filename = `baocao-donhang-${range.startLabel}_${range.endLabel}.xlsx`
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    )
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${filename}"`,
+    )
+    res.send(buffer)
+  } catch (e) {
+    console.error(e)
+    res.status(500).json({ message: 'Không xuất được file Excel.' })
+  }
+})
+
 router.get('/orders/:id', async (req, res) => {
   try {
     if (!mongoose.isValidObjectId(req.params.id)) {
@@ -753,61 +781,7 @@ router.get('/orders/:id', async (req, res) => {
       .lean()
     if (!order) return res.status(404).json({ message: 'Không tìm thấy đơn.' })
 
-    const productIds = [
-      ...new Set(
-        (order.items || [])
-          .map((i) => i.productId && String(i.productId))
-          .filter(Boolean),
-      ),
-    ]
-    const products = await Product.find({ _id: { $in: productIds } })
-      .select(
-        'name images variants._id variants.key variants.displayKey variants.typeName variants.color variants.size variants.price variants.originalPrice variants.stockQuantity variants.isAvailable variants.sku variants.images',
-      )
-      .lean()
-    const productMap = new Map(products.map((p) => [String(p._id), p]))
-
-    const enriched = {
-      ...order,
-      shippingAddressText: buildShippingAddressText(order),
-      items: (order.items || []).map((i) => {
-        const p = productMap.get(String(i.productId))
-        const v = p?.variants?.find(
-          (variant) => String(variant._id) === String(i.variantId),
-        )
-        return {
-          ...i,
-          name: i.name || p?.name || '',
-          variantLabel: i.variantLabel || formatVariantLabel(v) || '',
-          thumbnail: v?.images?.[0] || p?.images?.[0] || '',
-          product: p
-            ? {
-                _id: p._id,
-                name: p.name || '',
-                images: p.images || [],
-              }
-            : null,
-          variant: v
-            ? {
-                _id: v._id,
-                key: v.key || '',
-                displayKey: v.displayKey || '',
-                typeName: v.typeName || '',
-                color: v.color || '',
-                size: v.size || '',
-                price: Number(v.price || 0),
-                originalPrice: Number(v.originalPrice || 0),
-                stockQuantity: Number(v.stockQuantity || 0),
-                isAvailable: Boolean(v.isAvailable),
-                sku: v.sku || '',
-                images: v.images || [],
-              }
-            : null,
-        }
-      }),
-    }
-
-    res.json(enriched)
+    res.json(await enrichOrder(order))
   } catch (e) {
     console.error(e)
     res.status(500).json({ message: 'Không tải được chi tiết đơn.' })
@@ -847,18 +821,41 @@ router.patch('/orders/:id/status', async (req, res) => {
     }
   }
 
-  const update = { status }
+  const processedBy = pickProcessedBy(req.body)
+  const updateOp = { $set: { status } }
   if (status === 'CANCELLED') {
-    update.note = note
+    updateOp.$set.note = note
   } else if (note !== undefined) {
-    update.note = note
+    updateOp.$set.note = note
   }
 
-  const o = await Order.findByIdAndUpdate(req.params.id, update, {
+  if (status !== current.status) {
+    const historyNote =
+      status === 'CANCELLED'
+        ? note
+        : note !== undefined
+          ? note
+          : ''
+    updateOp.$push = {
+      statusHistory: buildStatusHistoryEntry({
+        fromStatus: current.status,
+        toStatus: status,
+        processedBy: processedBy ?? null,
+        note: historyNote,
+      }),
+    }
+    if (processedBy) {
+      updateOp.$set.processedBy = processedBy
+    }
+  } else if (processedBy !== undefined) {
+    updateOp.$set.processedBy = processedBy
+  }
+
+  const o = await Order.findByIdAndUpdate(req.params.id, updateOp, {
     returnDocument: 'after',
   }).lean()
   if (!o) return res.status(404).json({ message: 'Không tìm thấy đơn.' })
-  res.json(o)
+  res.json(await enrichOrder(o))
 })
 
 /** Cập nhật đơn vị vận chuyển & mã giao hàng (khách xem qua GET đơn). */

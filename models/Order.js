@@ -16,8 +16,36 @@ const orderItemSchema = new mongoose.Schema(
   { _id: false },
 )
 
+const statusHistoryEntrySchema = new mongoose.Schema(
+  {
+    fromStatus: { type: String, default: null },
+    toStatus: {
+      type: String,
+      required: true,
+      enum: [
+        'PENDING',
+        'CONTACTING',
+        'CONFIRMED',
+        'SHIPPING',
+        'COMPLETED',
+        'CANCELLED',
+      ],
+    },
+    processedBy: { type: String, default: null, trim: true, maxlength: 120 },
+    note: { type: String, default: '', trim: true, maxlength: 500 },
+    at: { type: Date, default: Date.now },
+  },
+  { _id: true },
+)
+
 const orderSchema = new mongoose.Schema(
   {
+    /** Mã đơn 6 chữ số hiển thị cho khách (duy nhất). */
+    orderCode: {
+      type: String,
+      trim: true,
+      maxlength: 6,
+    },
     user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
     contact: {
       name: { type: String, default: '', trim: true, required: false },
@@ -54,9 +82,16 @@ const orderSchema = new mongoose.Schema(
       trackingNumber: { type: String, default: '', trim: true, maxlength: 200 },
     },
     note: { type: String, default: '' },
+    /** Nhân viên xử lý gần nhất (denormalized — lấy từ statusHistory). */
+    processedBy: { type: String, default: null, trim: true, maxlength: 120 },
+    /** Lịch sử từng lần đổi trạng thái + nhân viên phụ trách. */
+    statusHistory: { type: [statusHistoryEntrySchema], default: [] },
   },
   { timestamps: true },
 )
+
+orderSchema.index({ orderCode: 1 }, { unique: true, sparse: true })
+orderSchema.index({ createdAt: -1 })
 
 const Order = mongoose.model('Order', orderSchema)
 module.exports = { Order }

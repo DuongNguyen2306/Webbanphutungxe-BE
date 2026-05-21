@@ -4,6 +4,9 @@ const { authOptional, authRequired } = require('../middleware/auth')
 const { Order } = require('../models/Order')
 const { Product } = require('../models/Product')
 const { normalizeOrderStatus } = require('../lib/orders')
+const { allocateUniqueOrderCode } = require('../lib/orderCode')
+const { enrichOrder } = require('../lib/orderEnrich')
+const { buildStatusHistoryEntry } = require('../lib/orderStatusHistory')
 
 const router = express.Router()
 const ALL_STATUS_KEYS = new Set(['ALL', 'TAT_CA'])
@@ -158,24 +161,48 @@ router.post('/', authOptional, async (req, res) => {
     if (Math.abs(sum - Number(totalAmount)) > 1)
       return res.status(400).json({ message: 'Tổng tiền không khớp.' })
 
-    const order = await Order.create({
-      user: req.userId || null,
-      contact: {
-        name,
-        email,
-        phone,
-      },
-      shippingAddress: shipping,
-      items: normalized,
-      totalAmount: sum,
-      shippingFee: 0,
-      status: 'PENDING',
-    })
+    let order
+    let lastErr
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      try {
+        const orderCode = await allocateUniqueOrderCode()
+        // eslint-disable-next-line no-await-in-loop
+        const placedAt = new Date()
+        order = await Order.create({
+          orderCode,
+          user: req.userId || null,
+          contact: { name, email, phone },
+          shippingAddress: shipping,
+          items: normalized,
+          totalAmount: sum,
+          shippingFee: 0,
+          status: 'PENDING',
+          statusHistory: [
+            buildStatusHistoryEntry({
+              fromStatus: null,
+              toStatus: 'PENDING',
+              processedBy: null,
+              note: 'Khách đặt đơn',
+              at: placedAt,
+            }),
+          ],
+        })
+        break
+      } catch (err) {
+        lastErr = err
+        if (err?.code !== 11000) throw err
+      }
+    }
+    if (!order) throw lastErr || new Error('Không tạo được đơn hàng.')
+
+    const orderOut = await enrichOrder(order.toObject())
     res.status(201).json({
-      orderId: order._id,
-      shippingFee: 0,
       message:
         'Đã nhận đơn. Nhân viên sẽ liên hệ tư vấn qua SĐT trên.',
+      shippingFee: 0,
+      orderId: orderOut._id,
+      orderCode: orderOut.orderCode,
+      order: orderOut,
     })
   } catch (e) {
     console.error(e)
